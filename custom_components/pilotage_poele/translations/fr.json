@@ -45,7 +45,7 @@
      "marche_max": "Arrêt de sécurité d'un allumage automatique (min)",
      "arret_min": "Attente minimale entre deux allumages (min)",
      "marge": "Marge de prudence (1,25 = +25 %)",
-     "hysteresis": "Écart au-dessus de la cible pour l'arrêt (°C)"
+     "hysteresis": X
     }
    }
   }

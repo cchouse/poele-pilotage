@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -44,6 +44,12 @@ ul { list-style:none; margin:0; padding:0; } li { padding:6px 0; border-bottom:1
 details { margin-top:14px; border:1px solid var(--divider-color); border-radius:12px; padding:0 12px; }
 summary { min-height:48px; display:flex; align-items:center; cursor:pointer; font-weight:600; color:var(--primary-text-color); }
 details p, details ul { margin:0 0 12px; font-size:.9rem; color:var(--primary-text-color); line-height:1.5; }
+ha-card { display:block; container-type:inline-size; }
+.grille { display:grid; grid-template-columns:1fr; gap:0 18px; align-items:start; }
+.c1, .c2, .c3 { min-width:0; }
+@container (min-width: 640px) { .grille { grid-template-columns:1fr 1fr; } .c3 { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:0 18px; align-items:start; } .c3 > * { min-width:0; } }
+.c3 > details { grid-column:1 / -1; }
+@container (min-width: 1000px) { .grille { grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) minmax(0,1fr); } .c3 { grid-column:auto; display:block; } }
 @media (forced-colors: active) { .puce,.bandeau.act,button.b,button.t[aria-pressed="true"],.piece.lim { border-color:Highlight; } }
 @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation:none !important; } }
 `;
@@ -58,7 +64,19 @@ class PilotagePoeleCard extends HTMLElement {
     const cle = st ? st.last_updated + "|" + st.state : "absent";
     if (cle === this._cle) return; this._cle = cle; this._dessiner(st);
   }
-  getCardSize() { return 12; }
+  connectedCallback() {
+    if (this._ro || typeof ResizeObserver === "undefined") return;
+    this._large = null;
+    this._ro = new ResizeObserver(() => {
+      const large = this.offsetWidth >= 640;
+      if (this._large !== null && large !== this._large && this._hass) { this._cle = null; this.hass = this._hass; }
+      this._large = large;
+    });
+    this._ro.observe(this);
+  }
+  disconnectedCallback() { if (this._ro) { this._ro.disconnect(); this._ro = null; } }
+  getCardSize() { return 10; }
+  getGridOptions() { return { columns: 12, min_columns: 6, rows: "auto" }; }
   static getConfigElement() { return document.createElement("pilotage-poele-card-editor"); }
   static getStubConfig(h) {
     const e = Object.keys(h.states).find((k) => k.startsWith("sensor.") && h.states[k].attributes && h.states[k].attributes.garde_fous && h.states[k].attributes.boutons);
@@ -124,27 +142,37 @@ class PilotagePoeleCard extends HTMLElement {
     const journal = (a.journal || []).map((j) => `<li>${jjmm(j.debut)} · ${esc(SOURCES[j.source] || j.source)} · ${j.duree_min} min${j.allumage_min != null ? ` (allumage ${j.allumage_min} min)` : ""}${Object.keys(j.pieces || {}).length ? " · montée " + Object.entries(j.pieces).map(([n, v]) => `${esc(n)} ${fmt(v)} °C/h`).join(", ") : ""}</li>`).join("") || `<li class="vide">Aucun cycle enregistré pour l'instant.</li>`;
     const da = a.derniere_action;
     const inter = (cle, lib) => `<button class="t" id="${cle}" aria-pressed="${!!d[cle]}" ${b[cle] ? "" : "disabled"}><span>${lib}</span><span>${d[cle] ? "● Activé" : "○ Désactivé"}</span></button>`;
+    const eauHtml = a.eau != null || (a.historique || []).some((x) => x[2] != null) ? `<div class="sec"><h3>Eau du circuit : ${fmt(a.eau)} °C</h3>${this._courbes(a, "e", "de l'eau", (h) => [{ nom: "Eau", pts: h.map((x) => [x[0], x[2]]) }])}</div>` : "";
+    const ouvert = this.offsetWidth >= 640 ? "open" : "";
     r.innerHTML = `<style>${STYLE}</style><ha-card>
       <div class="tete"><span class="titre">Poêle à granulés</span><span class="puce ${pb ? "pb" : ""}"><span aria-hidden="true">${ICONE[a.etat] || "?"}</span> ${esc(a.etat_libelle)}</span></div>
       ${d.verrou ? `<div class="bandeau" role="alert" style="margin-bottom:10px;border-color:var(--error-color,#b3261e)"><b>⚠ Allumage automatique verrouillé</b> après un échec d'allumage. Vérifiez le poêle, puis réactivez l'allumage automatique.</div>` : ""}
-      <div class="bandeau ${d.auto ? "act" : ""}">${ban}<span class="mode">${mode}</span>
-        <div class="sous">${esc(au.ok ? "✓ " : "") + esc(au.raison || "")}</div></div>
-      <div class="actions"><button class="b" id="allumer" ${b.allumer ? "" : "disabled"}>▶ Allumer maintenant</button>
-        <button class="b" id="annuler" ${b.annuler ? "" : "disabled"}>${actif ? "■ Annuler / éteindre" : "✕ Annuler l'allumage prévu"}</button></div>
-      <div class="inter">${inter("auto", "Allumage automatique")}${inter("arret_auto", "Arrêt automatique")}${inter("absent", "Mode absent")}</div>
-      <div class="sec"><h3>Le poêle sur 24 heures</h3>${this._frise(a)}</div>
-      <div class="sec"><h3>Les pièces (la plus lente décide)</h3>${piecesHtml}</div>
-      <div class="sec"><h3>Températures des pièces</h3>${this._courbes(a, "p", "des pièces", (h) => (a.pieces_noms || []).map((n, i) => ({ nom: n, pts: h.map((x) => [x[0], (x[4] || [])[i]]) })))}</div>
-      ${a.eau != null || (a.historique || []).some((x) => x[2] != null) ? `<div class="sec"><h3>Eau du circuit : ${fmt(a.eau)} °C</h3>${this._courbes(a, "e", "de l'eau", (h) => [{ nom: "Eau", pts: h.map((x) => [x[0], x[2]]) }])}</div>` : ""}
-      <details open><summary>Ce que j'ai appris (${Math.round((ap.confiance || 0) * 100)} % de confiance)</summary>
-        <ul><li>Délai d'allumage : ${ap.delai_appris ? `appris sur ${(ap.delais || []).length} essai(s), prudent ≈ ${Math.round(ap.delai_p80)} min` : "valeur par défaut 20 min, pas encore appris"}</li>${piecesAppris}</ul>
-        <p class="petit">La confiance monte avec les allumages observés. Tant qu'une valeur est « par défaut », le calcul est volontairement prudent.</p></details>
-      <details><summary>Garde-fous actifs</summary><ul>
-        <li>Allumage automatique autorisé entre ${esc(gf.fenetre)}</li><li>Allumages automatiques aujourd'hui : ${gf.allumages_aujourdhui} / ${gf.max_allumages}</li>
-        <li>Attente minimale entre deux allumages : ${gf.arret_min} min</li><li>Marche minimale avant arrêt automatique : ${gf.marche_min} min</li>
-        <li>Arrêt de sécurité d'un allumage automatique : ${gf.marche_max} min</li><li>Jamais d'allumage dans les 20 minutes qui précèdent l'échéance</li></ul></details>
-      <details><summary>Derniers cycles</summary><ul>${journal}</ul>${da ? `<p class="petit">Dernière commande : ${esc(da.service === "turn_on" ? "allumage" : "arrêt")} (${esc(da.source)}) à ${jjmm(da.ts)}${da.erreur ? " — refusée : " + esc(da.erreur) : ""}</p>` : ""}
-        <p class="petit">État brut lu sur le poêle : « ${esc(a.statut_brut)} »</p></details>
+      <div class="grille">
+      <div class="c1">
+        <div class="bandeau ${d.auto ? "act" : ""}">${ban}<span class="mode">${mode}</span>
+          <div class="sous">${esc(au.ok ? "✓ " : "") + esc(au.raison || "")}</div></div>
+        <div class="actions"><button class="b" id="allumer" ${b.allumer ? "" : "disabled"}>▶ Allumer maintenant</button>
+          <button class="b" id="annuler" ${b.annuler ? "" : "disabled"}>${actif ? "■ Annuler / éteindre" : "✕ Annuler l'allumage prévu"}</button></div>
+        <div class="inter">${inter("auto", "Allumage automatique")}${inter("arret_auto", "Arrêt automatique")}${inter("absent", "Mode absent")}</div>
+        <details ${ouvert}><summary>Garde-fous actifs</summary><ul>
+          <li>Allumage automatique autorisé entre ${esc(gf.fenetre)}</li><li>Allumages automatiques aujourd'hui : ${gf.allumages_aujourdhui} / ${gf.max_allumages}</li>
+          <li>Attente minimale entre deux allumages : ${gf.arret_min} min</li><li>Marche minimale avant arrêt automatique : ${gf.marche_min} min</li>
+          <li>Arrêt de sécurité d'un allumage automatique : ${gf.marche_max} min</li><li>Jamais d'allumage dans les 20 minutes qui précèdent l'échéance</li></ul></details>
+      </div>
+      <div class="c2">
+        <div class="sec"><h3>Le poêle sur 24 heures</h3>${this._frise(a)}</div>
+        <div class="sec"><h3>Les pièces (la plus lente décide)</h3>${piecesHtml}</div>
+        <details ${ouvert}><summary>Ce que j'ai appris (${Math.round((ap.confiance || 0) * 100)} % de confiance)</summary>
+          <ul><li>Délai d'allumage : ${ap.delai_appris ? `appris sur ${(ap.delais || []).length} essai(s), prudent ≈ ${Math.round(ap.delai_p80)} min` : "valeur par défaut 20 min, pas encore appris"}</li>${piecesAppris}</ul>
+          <p class="petit">La confiance monte avec les allumages observés. Tant qu'une valeur est « par défaut », le calcul est volontairement prudent.</p></details>
+      </div>
+      <div class="c3">
+        <div class="sec"><h3>Températures des pièces</h3>${this._courbes(a, "p", "des pièces", (h) => (a.pieces_noms || []).map((n, i) => ({ nom: n, pts: h.map((x) => [x[0], (x[4] || [])[i]]) })))}</div>
+        ${eauHtml}
+        <details ${ouvert}><summary>Derniers cycles</summary><ul>${journal}</ul>${da ? `<p class="petit">Dernière commande : ${esc(da.service === "turn_on" ? "allumage" : "arrêt")} (${esc(da.source)}) à ${jjmm(da.ts)}${da.erreur ? " — refusée : " + esc(da.erreur) : ""}</p>` : ""}
+          <p class="petit">État brut lu sur le poêle : « ${esc(a.statut_brut)} »</p></details>
+      </div>
+      </div>
     </ha-card>`;
     r.getElementById("allumer")?.addEventListener("click", () => this._appel("button", "press", b.allumer));
     r.getElementById("annuler")?.addEventListener("click", () => this._appel("button", "press", b.annuler));
