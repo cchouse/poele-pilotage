@@ -207,3 +207,31 @@ async def test_carte_servie(hass, freezer, hass_client):
     entry, _ = await installer(hass, freezer)
     r = await (await hass_client()).get("/pilotage_poele/pilotage-poele-card.js")
     assert r.status == 200
+
+
+async def test_formulaire_options_s_ouvre_et_enregistre(hass, freezer):
+    entry, _ = await installer(hass, freezer)
+    r = await hass.config_entries.options.async_init(entry.entry_id)
+    assert r["type"] is FlowResultType.FORM, r
+    import voluptuous_serialize
+    from homeassistant.helpers import config_validation as cv
+    voluptuous_serialize.convert(r["data_schema"], custom_serializer=cv.custom_serializer)   # comme le fait l'interface
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {
+        "matin_actif": True, "matin_heure": "06:30:00", "soir_actif": False, "soir_heure": "18:00:00",
+        "fenetre_debut": "05:00:00", "fenetre_fin": "22:00:00", "max_allumages": 2, "marche_min": 60,
+        "marche_max": 400, "arret_min": 30, "marge": 1.3, "hysteresis": 0.5})
+    assert r["type"] is FlowResultType.CREATE_ENTRY, r
+    await hass.async_block_till_done()
+    assert hass.config_entries.async_entries(DOMAIN)[0].options["max_allumages"] == 2
+
+
+async def test_reconfigurer_le_poele_et_la_piece(hass, freezer):
+    entry, _ = await installer(hass, freezer)
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "reconfigure", "entry_id": entry.entry_id})
+    import voluptuous_serialize
+    from homeassistant.helpers import config_validation as cv
+    voluptuous_serialize.convert(r["data_schema"], custom_serializer=cv.custom_serializer)
+    sub = next(iter(entry.subentries.values()))
+    r = await hass.config_entries.subentries.async_init((entry.entry_id, SUBENTRY_PIECE),
+                                                        context={"source": "reconfigure", "subentry_id": sub.subentry_id})
+    voluptuous_serialize.convert(r["data_schema"], custom_serializer=cv.custom_serializer)

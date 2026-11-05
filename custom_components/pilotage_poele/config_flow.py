@@ -69,8 +69,12 @@ class PilotagePoeleConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 def _schema_options(d: dict[str, Any]) -> vol.Schema:
-    num = lambda mn, mx, st=1, u=None: selector.NumberSelector(  # noqa: E731
-        selector.NumberSelectorConfig(min=mn, max=mx, step=st, unit_of_measurement=u, mode=selector.NumberSelectorMode.BOX))
+    def num(mn, mx, st=1, u=None):
+        cfg = {"min": mn, "max": mx, "step": st, "mode": selector.NumberSelectorMode.BOX}
+        if u:
+            cfg["unit_of_measurement"] = u
+        return selector.NumberSelector(selector.NumberSelectorConfig(**cfg))
+
     return vol.Schema({
         vol.Required("matin_actif", default=d["matin_actif"]): selector.BooleanSelector(),
         vol.Required("matin_heure", default=d["matin_heure"]): selector.TimeSelector(),
