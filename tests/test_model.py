@@ -104,3 +104,12 @@ def test_garde_fous():
     assert not ok(n=3)[0]
     assert not ok(arret=now(6).timestamp() - 600)[0]
     assert ok(arret=now(6).timestamp() - 3600)[0]
+
+
+def test_fichiers_json_valides():
+    import json, pathlib
+    base = pathlib.Path(__file__).parent.parent / "custom_components" / "pilotage_poele"
+    for f in [*base.glob("translations/*.json"), base / "manifest.json"]:
+        json.loads(f.read_text(encoding="utf-8"))
+    fr = json.loads((base / "translations" / "fr.json").read_text(encoding="utf-8"))
+    assert fr["options"]["step"]["init"]["data"]["hysteresis"].startswith("Marge")
