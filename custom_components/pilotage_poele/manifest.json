@@ -1,0 +1,13 @@
+{
+  "domain": "pilotage_poele",
+  "name": "Pilotage poêle",
+  "version": "0.1.0",
+  "documentation": "https://github.com/cchouse",
+  "issue_tracker": "https://github.com/cchouse",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["http", "frontend"],
+  "iot_class": "calculated",
+  "integration_type": "service",
+  "requirements": []
+}

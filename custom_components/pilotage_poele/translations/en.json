@@ -1,0 +1,135 @@
+{
+ "config": {
+  "step": {
+   "user": {
+    "title": "Pilotage poêle",
+    "description": "Choisissez le poêle (intégration Duepi) et, si vous les avez, l'état, la température d'eau, l'extérieur et où recevoir les notifications. Tout le reste a des valeurs sûres et se règle plus tard dans « Configurer ».",
+    "data": {
+     "poele": "Poêle (entité climat)",
+     "statut": "État du poêle (capteur, facultatif)",
+     "temperature_eau": "Température d'eau (facultatif)",
+     "exterieur": "Température extérieure (facultatif)",
+     "notification": "Notifications (facultatif)"
+    }
+   },
+   "reconfigure": {
+    "title": "Modifier le poêle",
+    "data": {
+     "poele": "Poêle (entité climat)",
+     "statut": "État du poêle (capteur, facultatif)",
+     "temperature_eau": "Température d'eau (facultatif)",
+     "exterieur": "Température extérieure (facultatif)",
+     "notification": "Notifications (facultatif)"
+    }
+   }
+  },
+  "abort": {
+   "already_configured": "Pilotage poêle est déjà installé. Ajoutez des pièces depuis sa page.",
+   "reconfigure_successful": "Poêle mis à jour."
+  }
+ },
+ "options": {
+  "step": {
+   "init": {
+    "title": "Réglages du pilotage",
+    "description": "Les valeurs par défaut sont prudentes. L'allumage automatique reste désactivé tant que vous ne l'activez pas.",
+    "data": {
+     "matin_actif": "Objectif du matin",
+     "matin_heure": "Heure de confort du matin",
+     "soir_actif": "Objectif du soir",
+     "soir_heure": "Heure de confort du soir",
+     "fenetre_debut": "Allumage automatique autorisé à partir de",
+     "fenetre_fin": "…jusqu'à",
+     "max_allumages": "Allumages automatiques max par jour",
+     "marche_min": "Marche minimale avant arrêt automatique (min)",
+     "marche_max": "Arrêt de sécurité d'un allumage automatique (min)",
+     "arret_min": "Attente minimale entre deux allumages (min)",
+     "marge": "Marge de prudence (1,25 = +25 %)",
+     "hysteresis": "Écart au-dessus de la cible pour l'arrêt (°C)"
+    }
+   }
+  }
+ },
+ "config_subentries": {
+  "piece": {
+   "entry_type": "Pièce",
+   "initiate_flow": {
+    "user": "Ajouter une pièce",
+    "reconfigure": "Modifier la pièce"
+   },
+   "step": {
+    "user": {
+     "title": "Ajouter une pièce",
+     "description": "Choisissez le capteur de température et ce qui donne la température visée (par exemple « Consigne recommandée » de Confort ressenti).",
+     "data": {
+      "name": "Nom de la pièce",
+      "capteur_temperature": "Capteur de température",
+      "cible": "Température visée (entité)"
+     }
+    },
+    "reconfigure": {
+     "title": "Modifier la pièce",
+     "data": {
+      "name": "Nom de la pièce",
+      "capteur_temperature": "Capteur de température",
+      "cible": "Température visée (entité)"
+     }
+    }
+   },
+   "error": {
+    "nom_existe": "Une pièce porte déjà ce nom."
+   },
+   "abort": {
+    "reconfigure_successful": "Pièce mise à jour."
+   }
+  }
+ },
+ "entity": {
+  "sensor": {
+   "etat": {
+    "name": "Stove state",
+    "state": {
+     "arret": "Off",
+     "allumage": "Igniting",
+     "marche": "Running",
+     "extinction": "Shutting down / cleaning",
+     "probleme": "Problem",
+     "inconnu": "Unknown"
+    }
+   },
+   "prochain_allumage": {
+    "name": "Next suggested ignition"
+   },
+   "allumages_jour": {
+    "name": "Automatic ignitions today"
+   },
+   "confiance": {
+    "name": "Learning confidence"
+   }
+  },
+  "binary_sensor": {
+   "probleme": {
+    "name": "Problem"
+   }
+  },
+  "switch": {
+   "auto": {
+    "name": "Automatic ignition"
+   },
+   "arret_auto": {
+    "name": "Automatic stop"
+   },
+   "absent": {
+    "name": "Away mode"
+   }
+  },
+  "button": {
+   "allumer": {
+    "name": "Ignite now"
+   },
+   "annuler": {
+    "name": "Cancel planned ignition / switch off"
+   }
+  }
+ }
+}
