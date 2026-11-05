@@ -3,7 +3,7 @@
 Calcule **quand allumer** le poêle à granulés pour que les pièces soient à la bonne température à l'heure voulue, apprend les inerties de la maison, et explique chaque décision. Par défaut : **mode conseil**, rien n'est envoyé au poêle.
 
 ## Installation
-1. Marketplace → « Ajouter grâce à un lien » → `https://github.com/cchouse/pilotage-poele` → installer, redémarrer Home Assistant.
+1. Marketplace → « Ajouter grâce à un lien » → `https://github.com/cchouse/poele-pilotage` → installer, redémarrer Home Assistant.
 2. Ajouter l'intégration « Pilotage poêle » : choisir le poêle (entité climat de l'intégration Duepi) et, si vous les avez, l'état (capteur « Status »), la température d'eau, l'extérieur, et où recevoir les notifications.
 3. Sur la fiche : **Ajouter une pièce** → nom, capteur de température, **température visée** (par exemple le capteur « Consigne recommandée » de Confort ressenti, ou un `input_number`).
 4. Ajouter la carte « Pilotage poêle » au tableau de bord.
