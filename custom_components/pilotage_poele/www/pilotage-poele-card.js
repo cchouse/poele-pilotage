@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.3.0";
+const VERSION = "0.5.0";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -50,6 +50,21 @@ ha-card { display:block; container-type:inline-size; }
 @container (min-width: 640px) { .grille { grid-template-columns:1fr 1fr; } .c3 { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:0 18px; align-items:start; } .c3 > * { min-width:0; } }
 .c3 > details { grid-column:1 / -1; }
 @container (min-width: 1000px) { .grille { grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) minmax(0,1fr); } .c3 { grid-column:auto; display:block; } }
+.zt { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:8px 0; }
+button.zb { min-height:48px; border-radius:12px; border:2px solid var(--divider-color); background:transparent; font-weight:600; }
+button.zb[aria-pressed="true"] { border-color:var(--primary-color); background:color-mix(in srgb, var(--primary-color) 14%, transparent); }
+.cons { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:10px 0 4px; flex-wrap:wrap; }
+.cons .val { font-size:2rem; font-weight:600; color:var(--primary-text-color); }
+.cons .pm { display:flex; gap:8px; } button.pm1 { min-width:56px; min-height:56px; border-radius:12px; border:2px solid var(--primary-color); background:transparent; font-size:1.4rem; font-weight:600; }
+.jr { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin:10px 0; }
+button.j { min-height:48px; min-width:0; padding:0; border-radius:10px; border:2px solid var(--divider-color); background:transparent; font-weight:600; }
+button.j[aria-pressed="true"] { border-color:var(--primary-color); background:color-mix(in srgb, var(--primary-color) 14%, transparent); }
+.tr { display:grid; grid-template-columns:1fr 1fr 48px; gap:8px; align-items:center; margin:6px 0; }
+.tr label { display:flex; flex-direction:column; font-size:.75rem; color:var(--secondary-text-color); }
+.tr input { min-height:48px; font:inherit; font-size:1rem; padding:0 8px; border-radius:10px; border:2px solid var(--divider-color); background:transparent; color:var(--primary-text-color); color-scheme:light dark; width:100%; }
+.tr input:focus-visible { outline:3px solid var(--primary-color); outline-offset:2px; }
+button.x { min-height:48px; min-width:48px; border-radius:10px; border:2px solid var(--divider-color); background:transparent; font-size:1.1rem; }
+.ok { font-weight:600; }
 @media (forced-colors: active) { .puce,.bandeau.act,button.b,button.t[aria-pressed="true"],.piece.lim { border-color:Highlight; } }
 @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation:none !important; } }
 `;
@@ -83,6 +98,72 @@ class PilotagePoeleCard extends HTMLElement {
     return { entity: e || "" };
   }
   _appel(domaine, service, eid) { if (eid) this._hass.callService(domaine, service, { entity_id: eid }); }
+
+
+  // ---------- planning par zone ----------
+  _monterPlanning(a) {
+    const ph = this.shadowRoot.getElementById("planph"); if (!ph) return;
+    if (!this._plan) { this._plan = document.createElement("div"); this._ed = { zone: "chambre", jour: (new Date().getDay() + 6) % 7, brouillon: {} }; this._rendu = false; }
+    ph.replaceWith(this._plan); this._plan.id = "planph";
+    const actif = this._plan.contains(this.shadowRoot.activeElement);
+    if (!actif && !Object.keys(this._ed.brouillon).length || !this._rendu) { this._a = a; this._dessinerPlan(); }
+    else this._a = a;
+  }
+  _zone() { return ((this._a || {}).zones || {})[this._ed.zone]; }
+  _tranches() {
+    const z = this._zone(); const ed = this._ed;
+    return (ed.brouillon[ed.zone] || (z && z.planning) || {})[String(ed.jour)] || [];
+  }
+  _brouillon() {
+    const ed = this._ed; const z = this._zone();
+    if (!ed.brouillon[ed.zone]) ed.brouillon[ed.zone] = JSON.parse(JSON.stringify((z && z.planning) || {}));
+    return ed.brouillon[ed.zone];
+  }
+  _appelPlan(service, data) { this._hass.callService("pilotage_poele", service, data); }
+  _dessinerPlan() {
+    const a = this._a || {}; const zs = a.zones; const n = this._plan; this._rendu = true;
+    if (!zs) { n.innerHTML = ""; return; }
+    const ed = this._ed; const z = zs[ed.zone]; const sale = !!ed.brouillon[ed.zone];
+    const JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"], LONG = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
+    const src = !z || z.consigne == null ? "aucune consigne : ajoutez des tranches ci-dessous"
+      : z.source === "derogation" ? `dérogation jusqu'à ${hhmm(z.derogation.jusqu)}` : "selon le planning";
+    const auj = ((z && z.planning) || {})[String((new Date().getDay() + 6) % 7)] || [];
+    const tr = this._tranches();
+    const lignes = tr.map((t, i) => `<div class="tr"><label>Heure<input type="time" data-i="${i}" data-k="h" value="${esc(t.h)}" aria-label="Heure de la tranche ${i + 1}"></label>
+        <label>Consigne °C<input type="number" inputmode="decimal" step="0.5" min="10" max="28" data-i="${i}" data-k="c" value="${esc(t.c)}" aria-label="Consigne de la tranche ${i + 1}"></label>
+        <button class="x" data-sup="${i}" aria-label="Supprimer la tranche ${i + 1}">✕</button></div>`).join("") || `<div class="vide">Aucune tranche ce jour-là.</div>`;
+    n.innerHTML = `<h3>Planning des consignes</h3>
+      <div class="zt" role="tablist" aria-label="Zone">${Object.entries(zs).map(([k, v]) => `<button class="zb" role="tab" data-z="${k}" aria-pressed="${k === ed.zone}" aria-selected="${k === ed.zone}">${k === ed.zone ? "● " : "○ "}${esc(v.nom)}</button>`).join("")}</div>
+      <div class="petit">${z && z.pieces.length ? "Pièces : " + esc(z.pieces.join(", ")) : "Aucune pièce dans cette zone : choisissez la zone dans les réglages de la pièce."}</div>
+      <div class="cons"><div><div class="petit">Consigne en cours (${src})</div><div class="val">${z && z.consigne != null ? fmt(z.consigne) + " °C" : "–"}</div></div>
+        <div class="pm"><button class="pm1" id="moins" aria-label="Baisser la consigne de 0,5 degré">−</button><button class="pm1" id="plus" aria-label="Monter la consigne de 0,5 degré">+</button></div></div>
+      ${z && z.derogation ? `<button class="b" id="retour" style="width:100%;margin-top:6px">↩ Revenir au planning</button>` : ""}
+      <div class="petit" style="margin-top:6px">${z && z.prochain ? `Prochain changement : ${hhmm(z.prochain.ts)} → ${fmt(z.prochain.c)} °C.` : "Aucun changement prévu."} ${auj.length ? "Aujourd'hui : " + auj.map((t) => `${t.h} → ${fmt(t.c)} °C`).join(" · ") : ""}</div>
+      <div class="petit">Un + ou − change la consigne jusqu'à la prochaine tranche, puis le planning reprend.</div>
+      <details open><summary>Modifier le planning de la zone ${esc(z ? z.nom : "")}</summary>
+        <div class="jr" role="group" aria-label="Jour">${JOURS.map((j, i) => `<button class="j" data-j="${i}" aria-pressed="${i === ed.jour}" aria-label="${LONG[i]}">${j}</button>`).join("")}</div>
+        <div class="petit">Tranches du ${LONG[ed.jour]} : la consigne s'applique à partir de l'heure indiquée.</div>
+        ${lignes}
+        <div class="actions"><button class="b" id="ajout">+ Ajouter une tranche</button><button class="b" id="copie">Copier sur toute la semaine</button></div>
+        <div class="actions"><button class="b" id="enreg" ${sale ? "" : "disabled"}>✓ Enregistrer</button><button class="b" id="annul" ${sale ? "" : "disabled"}>✕ Annuler les modifications</button></div>
+        <div class="petit ok" role="status">${sale ? "Modifications non enregistrées." : ""}</div></details>`;
+    const R = (sel, f) => n.querySelectorAll(sel).forEach((e) => e.addEventListener("click", () => f(e)));
+    R("[data-z]", (e) => { ed.zone = e.dataset.z; this._dessinerPlan(); });
+    R("[data-j]", (e) => { ed.jour = Number(e.dataset.j); this._dessinerPlan(); });
+    const pas = (d) => { if (!z) return; const base = z.consigne != null ? z.consigne : 19; this._appelPlan("derogation", { zone: ed.zone, consigne: Math.max(10, Math.min(28, base + d)) }); };
+    n.querySelector("#moins")?.addEventListener("click", () => pas(-0.5)); n.querySelector("#plus")?.addEventListener("click", () => pas(0.5));
+    n.querySelector("#retour")?.addEventListener("click", () => this._appelPlan("retour_planning", { zone: ed.zone }));
+    n.querySelector("#ajout")?.addEventListener("click", () => { const b = this._brouillon(); const j = String(ed.jour); (b[j] = b[j] || []).push({ h: "06:30", c: 20 }); this._dessinerPlan(); });
+    n.querySelector("#copie")?.addEventListener("click", () => { const b = this._brouillon(); const src = JSON.parse(JSON.stringify(b[String(ed.jour)] || [])); for (let j = 0; j < 7; j++) b[String(j)] = JSON.parse(JSON.stringify(src)); this._dessinerPlan(); });
+    R("[data-sup]", (e) => { const b = this._brouillon(); b[String(ed.jour)].splice(Number(e.dataset.sup), 1); this._dessinerPlan(); });
+    n.querySelectorAll("input[data-i]").forEach((e) => e.addEventListener("change", () => {
+      const b = this._brouillon(); const t = b[String(ed.jour)][Number(e.dataset.i)];
+      if (e.dataset.k === "h") { t.h = e.value || t.h; b[String(ed.jour)].sort((x, y) => x.h.localeCompare(y.h)); } else { const v = parseFloat(String(e.value).replace(",", ".")); if (!Number.isNaN(v)) t.c = v; }
+      this._dessinerPlan();
+    }));
+    n.querySelector("#enreg")?.addEventListener("click", () => { this._appelPlan("definir_planning", { zone: ed.zone, planning: ed.brouillon[ed.zone] }); delete ed.brouillon[ed.zone]; this._dessinerPlan(); });
+    n.querySelector("#annul")?.addEventListener("click", () => { delete ed.brouillon[ed.zone]; this._dessinerPlan(); });
+  }
 
   _frise(a) {
     const h = a.historique || []; const now = Math.floor(Date.now() / 1000);
@@ -147,7 +228,7 @@ class PilotagePoeleCard extends HTMLElement {
     // bandeau « prochain allumage »
     let ban;
     if (a.etat === "marche" || a.etat === "allumage") ban = `<div class="heure">${esc(a.etat_libelle)}</div><div class="sous">${a.run ? `Depuis ${hhmm(a.run.debut)} · allumage ${esc(SOURCES[a.run.source] || a.run.source)}` : ""}</div>`;
-    else if (p && p.besoin && p.allumage) ban = `<div class="heure">${p.en_retard ? "Maintenant" : hhmm(p.allumage)}</div><div class="sous">Prochain allumage conseillé — objectif ${hhmm(p.echeance)}</div><div class="pourquoi">${esc(p.raison)}</div>`;
+    else if (p && p.besoin && p.allumage) ban = `<div class="heure">${p.en_retard ? "Maintenant" : hhmm(p.allumage)}</div><div class="sous">${p.immediat ? "Besoin immédiat : une pièce est sous la consigne en cours" : `Prochain allumage conseillé — objectif ${hhmm(p.echeance)}`}</div><div class="pourquoi">${esc(p.raison)}</div>`;
     else ban = `<div class="heure">Pas d'allumage prévu</div><div class="pourquoi">${esc(p ? p.raison : "Je n'ai pas encore de pièce à surveiller : ajoutez une pièce depuis la page de l'intégration.")}</div>`;
     const mode = d.auto ? "Automatique : j'allume seul si toutes les conditions sont réunies" : "Mode conseil : rien n'est envoyé au poêle";
     const piecesHtml = ((p && p.pieces) || []).map((x, i) => `<div class="piece ${i === 0 && p.besoin ? "lim" : ""}"><div class="l1"><span>${esc(x.nom)}${i === 0 && p.besoin ? " · la plus lente" : ""}</span><span>${fmt(x.temperature)} → ${fmt(x.cible)} °C</span></div>
@@ -188,7 +269,9 @@ class PilotagePoeleCard extends HTMLElement {
           <p class="petit">État brut lu sur le poêle : « ${esc(a.statut_brut)} »</p></details>
       </div>
       </div>
+      <div class="sec" id="planph"></div>
     </ha-card>`;
+    this._monterPlanning(a);
     r.getElementById("allumer")?.addEventListener("click", () => this._appel("button", "press", b.allumer));
     r.getElementById("annuler")?.addEventListener("click", () => this._appel("button", "press", b.annuler));
     for (const cle of ["auto", "arret_auto", "absent"]) r.getElementById(cle)?.addEventListener("click", () => this._appel("switch", d[cle] ? "turn_off" : "turn_on", b[cle]));
@@ -213,5 +296,5 @@ class PilotagePoeleCardEditor extends HTMLElement {
 customElements.get("pilotage-poele-card") || customElements.define("pilotage-poele-card", PilotagePoeleCard);
 customElements.get("pilotage-poele-card-editor") || customElements.define("pilotage-poele-card-editor", PilotagePoeleCardEditor);
 window.customCards = window.customCards || [];
-if (!window.customCards.some((c) => c.type === "pilotage-poele-card")) window.customCards.push({ type: "pilotage-poele-card", name: "Pilotage poêle", description: "Prochain allumage et pourquoi, frise 24 h, pièces, apprentissage, garde-fous.", preview: false });
+if (!window.customCards.some((c) => c.type === "pilotage-poele-card")) window.customCards.push({ type: "pilotage-poele-card", name: "Pilotage poêle", description: "Prochain allumage et pourquoi, planning des consignes par zone, frise 24 h, pièces, apprentissage, garde-fous.", preview: false });
 console.info(`%c PILOTAGE-POELE %c ${VERSION}`, "background:#1F5A4A;color:#fff", "");

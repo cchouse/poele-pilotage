@@ -45,7 +45,9 @@
      "marche_max": "Arrêt de sécurité d'un allumage automatique (min)",
      "arret_min": "Attente minimale entre deux allumages (min)",
      "marge": "Marge de prudence (1,25 = +25 %)",
-     "hysteresis": "Écart au-dessus de la cible pour l'arrêt (°C)"
+     "hysteresis": "Écart au-dessus de la cible pour l'arrêt (°C)",
+     "immediat_actif": "Advise lighting as soon as a room is below the current setpoint",
+     "seuil_immediat": "Gap below setpoint that triggers (°C)"
     }
    }
   }
@@ -60,11 +62,12 @@
    "step": {
     "user": {
      "title": "Ajouter une pièce",
-     "description": "Choisissez le capteur de température et ce qui donne la température visée (par exemple « Consigne recommandée » de Confort ressenti).",
+     "description": "Pick the temperature sensor and the planning zone (Bedroom or House): the target then comes from the zone planning. Without a zone, give the entity providing the target temperature.",
      "data": {
       "name": "Nom de la pièce",
       "capteur_temperature": "Capteur de température",
-      "cible": "Température visée (entité)"
+      "cible": "Target temperature (entity, if no zone)",
+      "zone": "Planning zone (optional)"
      }
     },
     "reconfigure": {
@@ -72,12 +75,14 @@
      "data": {
       "name": "Nom de la pièce",
       "capteur_temperature": "Capteur de température",
-      "cible": "Température visée (entité)"
+      "cible": "Target temperature (entity, if no zone)",
+      "zone": "Planning zone (optional)"
      }
     }
    },
    "error": {
-    "nom_existe": "Une pièce porte déjà ce nom."
+    "nom_existe": "Une pièce porte déjà ce nom.",
+    "zone_ou_cible": "Pick a planning zone or a target entity."
    },
    "abort": {
     "reconfigure_successful": "Pièce mise à jour."
@@ -129,6 +134,60 @@
    },
    "annuler": {
     "name": "Cancel planned ignition / switch off"
+   },
+   "retour_planning_chambre": {
+    "name": "Back to schedule Bedroom"
+   },
+   "retour_planning_maison": {
+    "name": "Back to schedule House"
+   }
+  },
+  "number": {
+   "consigne_chambre": {
+    "name": "Bedroom setpoint"
+   },
+   "consigne_maison": {
+    "name": "House setpoint"
+   }
+  }
+ },
+ "services": {
+  "definir_planning": {
+   "name": "Set a zone schedule",
+   "description": "Replaces the weekly schedule.",
+   "fields": {
+    "zone": {
+     "name": "Zone",
+     "description": "chambre ou maison"
+    },
+    "planning": {
+     "name": "Planning",
+     "description": "Objet {jour: [{h: HH:MM, c: °C}]}"
+    }
+   }
+  },
+  "derogation": {
+   "name": "Override setpoint until next slot",
+   "description": "Temporary override.",
+   "fields": {
+    "zone": {
+     "name": "Zone",
+     "description": "chambre ou maison"
+    },
+    "consigne": {
+     "name": "Consigne",
+     "description": "°C"
+    }
+   }
+  },
+  "retour_planning": {
+   "name": "Back to schedule",
+   "description": "Cancels the override.",
+   "fields": {
+    "zone": {
+     "name": "Zone",
+     "description": "chambre ou maison"
+    }
    }
   }
  }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import datetime, time, timedelta
 from typing import Any, Callable
 
@@ -13,13 +14,16 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_CIBLE, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE,
+    CONF_CIBLE, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, CONF_ZONE,
     DOMAIN, ECHANTILLON_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
 )
 from .model import (
     ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, amorcer_depuis_historique, classer, echeances,
     garde_fous, pente, planifier,
 )
+from .model import _v
+
+from .planning import ZONES, changements, consigne_a, prochain_changement, valider
 
 _LOGGER = logging.getLogger(__name__)
 SIGNAL = f"{DOMAIN}_maj_{{}}"
@@ -66,6 +70,9 @@ class Pilote:
         self._cmd_off_ts: float | None = None
         self._stable_depuis: float | None = None
         self._dernier_echantillon = 0.0
+        self.planning: dict[str, dict[str, Any]] = {}
+        self.derogations: dict[str, dict[str, float]] = {}
+        self.ignore_immediat = 0.0
         self.amorce = False
         self.bilan_amorce: dict[str, int] | None = None
         self._unsubs: list[Callable[[], None]] = []
@@ -101,6 +108,9 @@ class Pilote:
         self.run = d.get("run")
         self._cmd_off_ts = d.get("cmd_off")
         self.amorce = bool(d.get("amorce", False))
+        self.planning = {z: valider(p) for z, p in (d.get("planning") or {}).items() if z in ZONES}
+        self.derogations = {z: v for z, v in (d.get("derogations") or {}).items() if z in ZONES}
+        self.ignore_immediat = float(d.get("ignore_immediat") or 0.0)
         ids = [self.cfg[CONF_POELE]] + [self.cfg.get(k) for k in (CONF_STATUT, CONF_EAU, CONF_EXTERIEUR)]
         for _, c in self.pieces_cfg():
             ids += [c.get(CONF_TEMPERATURE), c.get(CONF_CIBLE)]
@@ -142,7 +152,8 @@ class Pilote:
             "appris": self.appris.to_dict(), "drapeaux": self.drapeaux, "journal": self.journal[-JOURNAL_MAX:],
             "historique": self.historique[-HISTO_MAX:], "dernier_arret": self.dernier_arret,
             "allumages": self.allumages, "ignore_echeance": self.ignore_echeance, "cmd": self.cmd, "run": self.run,
-            "cmd_off": self._cmd_off_ts, "amorce": self.amorce,
+            "cmd_off": self._cmd_off_ts, "amorce": self.amorce, "planning": self.planning,
+            "derogations": self.derogations, "ignore_immediat": self.ignore_immediat,
         }
 
     def _sauver(self) -> None:
@@ -165,9 +176,70 @@ class Pilote:
         self.statut_brut = statut or st.attributes.get("hvac_action") or st.state
         return classer(statut, st.state, st.attributes.get("hvac_action"), True)
 
-    def _mesures(self) -> list[PieceMesure]:
-        return [PieceMesure(nom, _float(self.hass, c.get(CONF_TEMPERATURE)), _float(self.hass, c.get(CONF_CIBLE)))
-                for nom, c in self.pieces_cfg()]
+    # ---------- consignes par zone ----------
+    def _zone_active(self, zone: str | None, quand: datetime) -> bool:
+        if not zone or zone not in ZONES:
+            return False
+        d = self.derogations.get(zone)
+        return bool(self.planning.get(zone)) or bool(d and quand.timestamp() < d["jusqu"])
+
+    def consigne_zone(self, zone: str, quand: datetime) -> tuple[float, str] | None:
+        """(consigne, source) d'une zone à un instant : dérogation en cours, sinon planning."""
+        d = self.derogations.get(zone)
+        if d and quand.timestamp() < d["jusqu"]:
+            return float(d["c"]), "derogation"
+        cp = consigne_a(self.planning.get(zone), quand)
+        return (cp[0], "planning") if cp else None
+
+    def _cible_piece(self, c: dict[str, Any], quand: datetime) -> float | None:
+        z = c.get(CONF_ZONE)
+        if self._zone_active(z, quand):
+            r = self.consigne_zone(z, quand)
+            return None if r is None else r[0]
+        return _float(self.hass, c.get(CONF_CIBLE))
+
+    def _mesures(self, quand: datetime | None = None, garder: Callable[[dict[str, Any]], bool] | None = None) -> list[PieceMesure]:
+        quand = quand or dt_util.now()
+        out = []
+        for nom, c in self.pieces_cfg():
+            cible = self._cible_piece(c, quand)
+            if garder is not None and not garder(c):
+                cible = None
+            out.append(PieceMesure(nom, _float(self.hass, c.get(CONF_TEMPERATURE)), cible))
+        return out
+
+    def _piece_classique(self, c: dict[str, Any], now: datetime) -> bool:
+        """Pièce suivie par les échéances fixes du matin et du soir (pas de planning de zone)."""
+        return not self._zone_active(c.get(CONF_ZONE), now)
+
+    def _fin_derogation(self, zone: str, now: datetime) -> float:
+        pc = prochain_changement(self.planning.get(zone), now)
+        return pc[0].timestamp() if pc else now.timestamp() + 12 * 3600
+
+    async def definir_planning(self, zone: str, planning: Any) -> None:
+        if zone not in ZONES:
+            raise ValueError(f"Zone inconnue : {zone}")
+        propre = valider(planning)
+        if propre:
+            self.planning[zone] = propre
+        else:
+            self.planning.pop(zone, None)
+        self._sauver()
+        await self._tick(None)
+
+    async def definir_derogation(self, zone: str, consigne: float) -> None:
+        if zone not in ZONES:
+            raise ValueError(f"Zone inconnue : {zone}")
+        now = dt_util.now()
+        self.derogations[zone] = {"c": round(float(consigne) * 2) / 2, "jusqu": self._fin_derogation(zone, now)}
+        self.ignore_immediat = 0.0
+        self._sauver()
+        await self._tick(None)
+
+    async def retour_planning(self, zone: str) -> None:
+        self.derogations.pop(zone, None)
+        self._sauver()
+        await self._tick(None)
 
     def _params(self) -> Params:
         o = self.opt
@@ -185,6 +257,9 @@ class Pilote:
     async def _tick_interne(self) -> None:
         now = dt_util.now()
         ts = now.timestamp()
+        for z in [z for z, d in self.derogations.items() if d["jusqu"] <= ts]:
+            self.derogations.pop(z)            # dérogation terminée : retour au planning
+            self._sauver()
         mesures = self._mesures()
         # échantillons pour l'apprentissage et l'historique
         if ts - self._dernier_echantillon >= ECHANTILLON_S:
@@ -225,12 +300,51 @@ class Pilote:
             h.append(_heure(o["soir_heure"]))
         return h
 
-    def _calculer_plan(self, now: datetime, mesures: list[PieceMesure]) -> Plan | None:
-        ech = echeances(now, self._heures_echeance())
-        if not ech:
+    def _calculer_plan(self, now: datetime, mesures: list[PieceMesure], avec_immediat: bool = True) -> Plan | None:
+        marge = float(self.opt["marge"])
+        marche = self.etat in ("allumage", "marche")
+        # 1. besoin immédiat : une pièce est nettement sous la consigne en cours
+        if avec_immediat and self.opt["immediat_actif"] and not marche and now.timestamp() >= self.ignore_immediat:
+            imm = self._plan_immediat(now, mesures, marge)
+            if imm is not None:
+                return imm
+        # 2. prochaines échéances : changements de consigne des zones, puis échéances fixes pour les autres pièces
+        instants: dict[datetime, dict[str, Any]] = {}
+        for z in ZONES:
+            for dt, _c in changements(self.planning.get(z), now, 36.0)[:6]:
+                instants.setdefault(dt, {"zones": set(), "classique": False})["zones"].add(z)
+        if any(self._piece_classique(c, now) for _, c in self.pieces_cfg()):
+            ech = echeances(now, self._heures_echeance())
+            if ech:
+                instants.setdefault(ech[0], {"zones": set(), "classique": False})["classique"] = True
+        candidats: list[Plan] = []
+        for dt in sorted(instants)[:8]:
+            info = instants[dt]
+            ms = self._mesures(dt, lambda c, info=info: (c.get(CONF_ZONE) in info["zones"] and self._zone_active(c.get(CONF_ZONE), dt))
+                               or (info["classique"] and self._piece_classique(c, now)))
+            candidats.append(planifier(now, dt, ms, self.appris, marge, deja_en_marche=marche))
+        a_chauffer = [p for p in candidats if p.besoin and p.allumage is not None]
+        if a_chauffer:
+            return min(a_chauffer, key=lambda p: p.allumage)
+        return candidats[0] if candidats else None
+
+    def _plan_immediat(self, now: datetime, mesures: list[PieceMesure], marge: float) -> Plan | None:
+        seuil = float(self.opt["seuil_immediat"])
+        manque = [m for m in mesures if m.temperature is not None and m.cible is not None and m.cible - m.temperature > seuil]
+        if not manque:
             return None
-        return planifier(now, ech[0], mesures, self.appris, float(self.opt["marge"]),
-                         deja_en_marche=self.etat in ("allumage", "marche"))
+        pl = planifier(now, now, mesures, self.appris, marge, deja_en_marche=False)
+        if not pl.besoin or not pl.pieces:
+            return None
+        d0 = pl.pieces[0]
+        delai, delai_appris = self.appris.delai_allumage()
+        raison = (f"Consigne en cours : {_v(d0['cible'])} °C pour « {d0['nom']} », qui est à {_v(d0['temperature'])} °C "
+                  f"(il manque {_v(d0['besoin'])} °C, écart supérieur à {_v(seuil)} °C). Allumage immédiat conseillé : "
+                  f"environ {round(pl.duree_min)} min avant d'être à la consigne "
+                  f"(montée {_v(d0['montee'])} °C/h{'' if d0['montee_apprise'] else ', valeur par défaut'}, "
+                  f"allumage {round(delai)} min{'' if delai_appris else ' par défaut'}).")
+        return replace(pl, echeance=now + timedelta(minutes=max(30.0, pl.duree_min)), raison=raison, immediat=True,
+                       en_retard=True)
 
     # ---------- transitions et apprentissage ----------
     async def _transition(self, ancien: str, nouveau: str, ts: float, mesures: list[PieceMesure]) -> None:
@@ -318,9 +432,14 @@ class Pilote:
         hyst = float(o["hysteresis"])
         en_marche = self.etat == "marche" and bool(self.run and self.run.get("marche"))
         t_marche = (ts - self.run["marche"]) if en_marche else None
+        # si la consigne baisse dans les 45 prochaines minutes, on vise déjà la plus basse : l'inertie finira le travail
+        plus_tard = {m.nom: m.cible for m in self._mesures(dt_util.as_local(dt_util.utc_from_timestamp(ts + 45 * 60)))}
         mesurables = [m for m in mesures if m.temperature is not None and m.cible is not None]
-        pieces = [{"nom": m.nom, "temperature": round(m.temperature, 2), "requis": round(m.cible + hyst, 2),
-                   "ok": m.temperature >= m.cible + hyst} for m in mesurables]
+        pieces = []
+        for m in mesurables:
+            cible = min(m.cible, plus_tard.get(m.nom) if plus_tard.get(m.nom) is not None else m.cible)
+            pieces.append({"nom": m.nom, "temperature": round(m.temperature, 2), "requis": round(cible + hyst, 2),
+                           "ok": m.temperature >= cible + hyst, "anticipe": cible < m.cible})
         pieces_ok = bool(pieces) and all(p["ok"] for p in pieces)
         stable = (ts - self._stable_depuis) if (self._stable_depuis and pieces_ok) else 0.0
         off_recent = self._off_recent(ts)
@@ -362,9 +481,13 @@ class Pilote:
             return  # trop tard pour que ce soit utile : on ne rallume pas juste avant l'échéance
         await self._commande("turn_on", "auto", plan)
         self.allumages.append(ts)
-        await self._notifier(
-            f"Poêle allumé automatiquement à {now.strftime('%H:%M')} pour que « {plan.limitante} » soit à température à "
-            f"{plan.echeance.strftime('%H:%M')}. Pour annuler : bouton « Annuler » du pilotage poêle.")
+        if plan.immediat:
+            msg = (f"Poêle allumé automatiquement à {now.strftime('%H:%M')} : « {plan.limitante} » est sous la consigne en cours. "
+                   "Pour annuler : bouton « Annuler » du pilotage poêle.")
+        else:
+            msg = (f"Poêle allumé automatiquement à {now.strftime('%H:%M')} pour que « {plan.limitante} » soit à température à "
+                   f"{plan.echeance.strftime('%H:%M')}. Pour annuler : bouton « Annuler » du pilotage poêle.")
+        await self._notifier(msg)
 
     async def _commande(self, service: str, source: str, plan: Plan | None = None) -> None:
         ts = dt_util.utcnow().timestamp()
@@ -401,7 +524,12 @@ class Pilote:
 
     async def annuler(self) -> None:
         """Annule l'allumage prévu pour la prochaine échéance ; éteint si le poêle a été allumé par l'auto/force."""
-        if self.plan and self.plan.echeance:
+        if self.plan and self.plan.immediat:
+            self.ignore_immediat = dt_util.utcnow().timestamp() + 2 * 3600     # j'ignore le besoin immédiat pendant 2 h
+            suite = self._calculer_plan(dt_util.now(), self._mesures(), avec_immediat=False)
+            if suite and suite.echeance:
+                self.ignore_echeance = suite.echeance.timestamp()     # et la prochaine échéance aussi
+        elif self.plan and self.plan.echeance:
             self.ignore_echeance = self.plan.echeance.timestamp()
         if self.etat in ("allumage", "marche") and self.run and self.run["source"] in ("auto", "force"):
             await self._commande("turn_off", "annulation")
@@ -414,6 +542,22 @@ class Pilote:
             self.drapeaux["verrou"] = False
         self._sauver()
         await self._tick(None)
+
+    def _zones_snapshot(self, now: datetime) -> dict[str, Any]:
+        ts = now.timestamp()
+        out = {}
+        for z, nom in ZONES.items():
+            cs = self.consigne_zone(z, now)
+            pc = prochain_changement(self.planning.get(z), now)
+            der = self.derogations.get(z)
+            out[z] = {
+                "nom": nom, "consigne": None if cs is None else cs[0], "source": "aucune" if cs is None else cs[1],
+                "prochain": None if pc is None else {"ts": int(pc[0].timestamp()), "c": pc[1]},
+                "planning": self.planning.get(z, {}),
+                "derogation": None if not der or der["jusqu"] <= ts else {"c": der["c"], "jusqu": int(der["jusqu"])},
+                "pieces": [n for n, c in self.pieces_cfg() if c.get(CONF_ZONE) == z],
+            }
+        return out
 
     # ---------- état pour l'interface ----------
     def snapshot(self) -> dict[str, Any]:
@@ -429,9 +573,11 @@ class Pilote:
                 "besoin": plan.besoin, "echeance": int(plan.echeance.timestamp()) if plan.echeance else None,
                 "allumage": int(plan.allumage.timestamp()) if plan.allumage else None, "duree_min": plan.duree_min,
                 "limitante": plan.limitante, "raison": plan.raison, "en_retard": plan.en_retard, "pieces": plan.pieces,
+                "immediat": plan.immediat,
             },
             "autorisation": {"ok": ok, "raison": raison_gf},
             "arret": self.conditions_arret(now.timestamp(), self._mesures()),
+            "zones": self._zones_snapshot(now),
             "garde_fous": {
                 "fenetre": f"{o['fenetre_debut'][:5]}–{o['fenetre_fin'][:5]}", "max_allumages": o["max_allumages"],
                 "allumages_aujourdhui": self._allumages_aujourdhui(now), "marche_min": o["marche_min"],

@@ -161,6 +161,7 @@ class Plan:
     pieces: list[dict[str, Any]] = field(default_factory=list)
     raison: str = ""
     en_retard: bool = False
+    immediat: bool = False
 
 
 def _v(x: float, n: int = 1) -> str:

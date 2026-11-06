@@ -11,8 +11,9 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
+from .planning import ZONES
 from .const import (
-    CONF_CIBLE, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, DOMAIN,
+    CONF_CIBLE, CONF_EAU, CONF_ZONE, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, DOMAIN,
     OPTIONS_DEFAUT, SUBENTRY_PIECE,
 )
 
@@ -88,6 +89,8 @@ def _schema_options(d: dict[str, Any]) -> vol.Schema:
         vol.Required("arret_min", default=d["arret_min"]): num(0, 240, 5, "min"),
         vol.Required("marge", default=d["marge"]): num(1.0, 2.0, 0.05),
         vol.Required("hysteresis", default=d["hysteresis"]): num(0, 2, 0.1, "°C"),
+        vol.Required("immediat_actif", default=d["immediat_actif"]): selector.BooleanSelector(),
+        vol.Required("seuil_immediat", default=d["seuil_immediat"]): num(0.2, 3, 0.1, "°C"),
     })
 
 
@@ -109,8 +112,16 @@ def _schema_piece(d: dict[str, Any] | None = None) -> vol.Schema:
     return vol.Schema({
         req("name"): selector.TextSelector(),
         req(CONF_TEMPERATURE): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class="temperature")),
-        req(CONF_CIBLE): selector.EntitySelector(selector.EntitySelectorConfig(domain=["sensor", "number", "input_number"])),
+        vol.Optional(CONF_ZONE, description={"suggested_value": d.get(CONF_ZONE)}): selector.SelectSelector(
+            selector.SelectSelectorConfig(options=[{"value": k, "label": v} for k, v in ZONES.items()],
+                                          mode=selector.SelectSelectorMode.LIST)),
+        vol.Optional(CONF_CIBLE, description={"suggested_value": d.get(CONF_CIBLE)}): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain=["sensor", "number", "input_number"])),
     })
+
+
+def _donnees_piece(u: dict[str, Any]) -> dict[str, Any]:
+    return {k: u[k] for k in (CONF_TEMPERATURE, CONF_ZONE, CONF_CIBLE) if u.get(k)}
 
 
 class PieceSubentryFlow(ConfigSubentryFlow):
@@ -120,14 +131,19 @@ class PieceSubentryFlow(ConfigSubentryFlow):
             noms = {s.title.casefold() for s in self._get_entry().subentries.values()}
             if user_input["name"].strip().casefold() in noms:
                 erreurs["name"] = "nom_existe"
+            elif not user_input.get(CONF_ZONE) and not user_input.get(CONF_CIBLE):
+                erreurs["base"] = "zone_ou_cible"
             else:
-                return self.async_create_entry(title=user_input["name"].strip(), data={
-                    CONF_TEMPERATURE: user_input[CONF_TEMPERATURE], CONF_CIBLE: user_input[CONF_CIBLE]})
+                return self.async_create_entry(title=user_input["name"].strip(), data=_donnees_piece(user_input))
         return self.async_show_form(step_id="user", data_schema=_schema_piece(user_input), errors=erreurs)
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         sub = self._get_reconfigure_subentry()
+        erreurs: dict[str, str] = {}
         if user_input is not None:
-            return self.async_update_and_abort(self._get_entry(), sub, title=user_input["name"].strip(), data={
-                CONF_TEMPERATURE: user_input[CONF_TEMPERATURE], CONF_CIBLE: user_input[CONF_CIBLE]})
-        return self.async_show_form(step_id="reconfigure", data_schema=_schema_piece({"name": sub.title, **sub.data}))
+            if not user_input.get(CONF_ZONE) and not user_input.get(CONF_CIBLE):
+                erreurs["base"] = "zone_ou_cible"
+            else:
+                return self.async_update_and_abort(self._get_entry(), sub, title=user_input["name"].strip(),
+                                                   data=_donnees_piece(user_input))
+        return self.async_show_form(step_id="reconfigure", data_schema=_schema_piece(user_input or {"name": sub.title, **sub.data}), errors=erreurs)

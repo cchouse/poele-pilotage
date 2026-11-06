@@ -138,3 +138,17 @@ def test_amorcer_depuis_historique():
     ap2 = Appris()
     b2 = amorcer_depuis_historique(h, ["Salon"], {"Salon": 15.0}, ap2)
     assert b2["montee"] == 0
+
+
+def test_planning_pur():
+    from datetime import datetime
+    from custom_components.pilotage_poele.planning import changements, consigne_a, prochain_changement, valider
+    p = valider({"0": [{"h": "22:30", "c": 18}, {"h": "06:30", "c": 20.7}, {"h": "x", "c": 3}], "1": [{"h": "06:30", "c": 20.5}]})
+    assert p == {"0": [{"h": "06:30", "c": 20.5}, {"h": "22:30", "c": 18.0}], "1": [{"h": "06:30", "c": 20.5}]}
+    lun_5h = datetime(2026, 11, 9, 5, 0)
+    assert consigne_a(p, datetime(2026, 11, 9, 7, 0))[0] == 20.5
+    assert consigne_a(p, datetime(2026, 11, 9, 23, 0))[0] == 18.0
+    assert consigne_a(p, lun_5h)[0] == 20.5                      # retombe sur la dernière tranche commencée
+    assert [c for _, c in changements(p, lun_5h, 24)] == [20.5, 18.0]
+    assert prochain_changement(p, lun_5h)[0].hour == 6
+    assert consigne_a({}, lun_5h) is None and changements(None, lun_5h) == []

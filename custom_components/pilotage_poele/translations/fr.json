@@ -45,7 +45,9 @@
      "marche_max": "Arrêt de sécurité d'un allumage automatique (min)",
      "arret_min": "Attente minimale entre deux allumages (min)",
      "marge": "Marge de prudence (1,25 = +25 %)",
-     "hysteresis": "Marge au-dessus de la température visée pour l'arrêt (°C)"
+     "hysteresis": "Marge au-dessus de la température visée pour l'arrêt (°C)",
+     "immediat_actif": "Allumage conseillé dès que la pièce est sous la consigne en cours",
+     "seuil_immediat": "Écart sous la consigne qui déclenche (°C)"
     }
    }
   }
@@ -60,11 +62,12 @@
    "step": {
     "user": {
      "title": "Ajouter une pièce",
-     "description": "Choisissez le capteur de température et ce qui donne la température visée (par exemple « Consigne recommandée » de Confort ressenti).",
+     "description": "Choisissez le capteur de température et la zone de planning (Chambre ou Maison) : la consigne vient alors du planning de la zone. Sans zone, indiquez l'entité qui donne la température visée.",
      "data": {
       "name": "Nom de la pièce",
       "capteur_temperature": "Capteur de température",
-      "cible": "Température visée (entité)"
+      "cible": "Température visée (entité, si pas de zone)",
+      "zone": "Zone de planning (facultatif)"
      }
     },
     "reconfigure": {
@@ -72,12 +75,14 @@
      "data": {
       "name": "Nom de la pièce",
       "capteur_temperature": "Capteur de température",
-      "cible": "Température visée (entité)"
+      "cible": "Température visée (entité, si pas de zone)",
+      "zone": "Zone de planning (facultatif)"
      }
     }
    },
    "error": {
-    "nom_existe": "Une pièce porte déjà ce nom."
+    "nom_existe": "Une pièce porte déjà ce nom.",
+    "zone_ou_cible": "Choisissez une zone de planning ou une entité de température visée."
    },
    "abort": {
     "reconfigure_successful": "Pièce mise à jour."
@@ -129,6 +134,60 @@
    },
    "annuler": {
     "name": "Annuler l'allumage prévu / éteindre"
+   },
+   "retour_planning_chambre": {
+    "name": "Revenir au planning Chambre"
+   },
+   "retour_planning_maison": {
+    "name": "Revenir au planning Maison"
+   }
+  },
+  "number": {
+   "consigne_chambre": {
+    "name": "Consigne Chambre"
+   },
+   "consigne_maison": {
+    "name": "Consigne Maison"
+   }
+  }
+ },
+ "services": {
+  "definir_planning": {
+   "name": "Définir le planning d'une zone",
+   "description": "Remplace le planning hebdomadaire (jours 0 = lundi à 6 = dimanche, tranches h et c).",
+   "fields": {
+    "zone": {
+     "name": "Zone",
+     "description": "chambre ou maison"
+    },
+    "planning": {
+     "name": "Planning",
+     "description": "Objet {jour: [{h: HH:MM, c: °C}]}"
+    }
+   }
+  },
+  "derogation": {
+   "name": "Changer la consigne jusqu'à la prochaine tranche",
+   "description": "Dérogation temporaire.",
+   "fields": {
+    "zone": {
+     "name": "Zone",
+     "description": "chambre ou maison"
+    },
+    "consigne": {
+     "name": "Consigne",
+     "description": "°C"
+    }
+   }
+  },
+  "retour_planning": {
+   "name": "Revenir au planning",
+   "description": "Annule la dérogation.",
+   "fields": {
+    "zone": {
+     "name": "Zone",
+     "description": "chambre ou maison"
+    }
    }
   }
  }

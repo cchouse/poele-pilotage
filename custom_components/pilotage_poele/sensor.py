@@ -22,7 +22,7 @@ class Etat(PoeleEntity, SensorEntity):
     _attr_options = list(ETATS)
     _unrecorded_attributes = frozenset({
         "plan", "autorisation", "garde_fous", "appris", "historique", "journal", "derniere_action", "run",
-        "arret", "eau", "exterieur", "pieces_noms", "drapeaux", "etat_libelle", "statut_brut", "boutons"})
+        "arret", "zones", "eau", "exterieur", "pieces_noms", "drapeaux", "etat_libelle", "statut_brut", "boutons"})
 
     def __init__(self, p) -> None:
         super().__init__(p, "etat")

@@ -1,7 +1,7 @@
 """Constantes de l'intégration Pilotage poêle."""
 DOMAIN = "pilotage_poele"
 SUBENTRY_PIECE = "piece"
-VERSION = "0.3.0"
+VERSION = "0.5.0"
 URL_CARTE = "/pilotage_poele/pilotage-poele-card.js"
 
 # configuration principale
@@ -13,7 +13,8 @@ CONF_NOTIF = "notification"     # entité notify (facultatif)
 
 # pièce (sous-entrée)
 CONF_TEMPERATURE = "capteur_temperature"
-CONF_CIBLE = "cible"            # entité qui donne la température visée (ex. Consigne recommandée)
+CONF_CIBLE = "cible"            # entité qui donne la température visée (facultatif si la pièce est dans une zone)
+CONF_ZONE = "zone"              # zone de planning : « chambre » ou « maison » (facultatif)
 
 # options (valeurs par défaut sûres)
 OPTIONS_DEFAUT = {
@@ -29,6 +30,8 @@ OPTIONS_DEFAUT = {
     "arret_min": 45,         # minutes d'arrêt minimum entre deux allumages automatiques
     "marge": 1.25,           # marge de prudence sur la durée de chauffe
     "hysteresis": 0.3,       # °C au-dessus de la cible pour l'arrêt automatique
+    "immediat_actif": True,  # allumage conseillé tout de suite si la pièce est sous la consigne en cours
+    "seuil_immediat": 0.5,   # °C d'écart sous la consigne en cours avant de déclencher
 }
 
 TICK_S = 60

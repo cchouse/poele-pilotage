@@ -18,7 +18,7 @@ def eid(hass, entry, domaine, cle):
     return er.async_get(hass).async_get_entity_id(domaine, DOMAIN, f"{entry.entry_id}_{cle}")
 
 
-async def installer(hass, freezer, heure="2026-11-05 05:30:00+01:00", temp="17.0", cible="20.5", statut="Off"):
+async def installer(hass, freezer, heure="2026-11-05 05:30:00+01:00", temp="17.0", cible="20.5", statut="Off", zone=None):
     await hass.config.async_set_time_zone("Europe/Paris")
     freezer.move_to(heure)
     hass.states.async_set(POELE, "off", {"hvac_action": "off"})
@@ -34,7 +34,9 @@ async def installer(hass, freezer, heure="2026-11-05 05:30:00+01:00", temp="17.0
     assert r["type"] is FlowResultType.CREATE_ENTRY, r
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     r = await hass.config_entries.subentries.async_init((entry.entry_id, SUBENTRY_PIECE), context={"source": SOURCE_USER})
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"name": "Chambre", CONF_TEMPERATURE: TEMP, CONF_CIBLE: CIBLE})
+    donnees = {"name": "Chambre", CONF_TEMPERATURE: TEMP}
+    donnees.update({"zone": zone} if zone else {CONF_CIBLE: CIBLE})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], donnees)
     assert r["type"] is FlowResultType.CREATE_ENTRY, r
     await hass.async_block_till_done()
     return entry, appels
@@ -118,6 +120,8 @@ async def test_pas_d_allumage_si_pas_de_besoin(hass, freezer):
 
 async def test_pas_d_allumage_trop_pres_de_l_echeance(hass, freezer):
     entry, appels = await installer(hass, freezer, heure="2026-11-05 06:50:00+01:00", temp="15.0")
+    hass.config_entries.async_update_entry(entry, options={"immediat_actif": False})
+    await hass.async_block_till_done()
     await bascule(hass, entry, "auto")
     assert appels["on"] == []                           # 10 min avant 7 h : inutile et risqué
 
@@ -269,3 +273,112 @@ async def test_amorce_une_seule_fois_depuis_historique(hass, freezer):
     p._amorcer()
     assert p.appris.pieces[p.pieces_cfg()[0][0]]["n_refroid"] == n     # pas de double apprentissage
     assert p._export()["amorce"] is True
+
+
+# ---------- 0.5 : planning par zone ----------
+PLANNING = {str(j): [{"h": "06:30", "c": 20.5}, {"h": "22:30", "c": 17.0}] for j in range(7)}
+
+
+async def _planning(hass, zone="chambre", planning=PLANNING):
+    await hass.services.async_call("pilotage_poele", "definir_planning", {"zone": zone, "planning": planning}, blocking=True)
+    await hass.async_block_till_done()
+
+
+async def test_piece_sans_zone_ni_cible_refusee(hass, freezer):
+    entry, _ = await installer(hass, freezer)
+    r = await hass.config_entries.subentries.async_init((entry.entry_id, SUBENTRY_PIECE), context={"source": SOURCE_USER})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"name": "Salon", CONF_TEMPERATURE: TEMP})
+    assert r["type"] is FlowResultType.FORM and r["errors"]["base"] == "zone_ou_cible"
+
+
+async def test_formulaires_serialisables_planning(hass, freezer):
+    import voluptuous_serialize
+    from homeassistant.helpers import config_validation as cv
+    entry, _ = await installer(hass, freezer, zone="chambre")
+    r = await hass.config_entries.subentries.async_init((entry.entry_id, SUBENTRY_PIECE), context={"source": SOURCE_USER})
+    voluptuous_serialize.convert(r["data_schema"], custom_serializer=cv.custom_serializer)
+    r = await hass.config_entries.options.async_init(entry.entry_id)
+    voluptuous_serialize.convert(r["data_schema"], custom_serializer=cv.custom_serializer)
+
+
+async def test_planning_donne_la_consigne_et_l_echeance(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 05:30:00+01:00", temp="17.0", zone="chambre")
+    await _planning(hass)
+    nombre = eid(hass, entry, "number", "consigne_chambre")
+    assert float(hass.states.get(nombre).state) == 17.0          # tranche de 22:30 la veille
+    p = entry.runtime_data
+    await avancer(hass, freezer, entry, 1)
+    assert p.plan.besoin and not p.plan.immediat
+    assert p.plan.echeance.strftime("%H:%M") == "06:30"          # le changement de consigne est l'échéance
+    zones = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["zones"]
+    assert zones["chambre"]["source"] == "planning" and zones["chambre"]["prochain"]["c"] == 20.5
+
+
+async def test_derogation_relance_un_conseil_immediat_puis_retour_planning(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 19:16:00+01:00", temp="19.5", zone="chambre")
+    await _planning(hass, planning={str(j): [{"h": "06:30", "c": 19.5}, {"h": "22:30", "c": 17.0}] for j in range(7)})
+    p = entry.runtime_data
+    await avancer(hass, freezer, entry, 1)
+    assert not p.plan.immediat                                   # 19,5 atteint : rien d'urgent
+    nombre = eid(hass, entry, "number", "consigne_chambre")
+    await hass.services.async_call("number", "set_value", {"entity_id": nombre, "value": 20.5}, blocking=True)
+    await hass.async_block_till_done()
+    assert p.plan.immediat and p.plan.allumage <= p.plan.echeance
+    assert "Consigne en cours" in p.plan.raison and "20,5" in p.plan.raison
+    zones = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["zones"]
+    assert zones["chambre"]["source"] == "derogation"
+    await hass.services.async_call("button", "press", {"entity_id": eid(hass, entry, "button", "retour_planning_chambre")}, blocking=True)
+    await hass.async_block_till_done()
+    assert float(hass.states.get(nombre).state) == 19.5 and not p.plan.immediat
+
+
+async def test_derogation_prend_fin_a_la_prochaine_tranche(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 22:00:00+01:00", temp="19.5", zone="maison")
+    await _planning(hass, zone="maison")
+    await hass.services.async_call("pilotage_poele", "derogation", {"zone": "maison", "consigne": 21.0}, blocking=True)
+    nombre = eid(hass, entry, "number", "consigne_maison")
+    assert float(hass.states.get(nombre).state) == 21.0
+    await avancer(hass, freezer, entry, 40)                      # 22:40 : la tranche de 22:30 a repris la main
+    assert float(hass.states.get(nombre).state) == 17.0
+    assert not entry.runtime_data.derogations
+
+
+async def test_allumage_automatique_immediat(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.0", zone="chambre")
+    await _planning(hass)
+    await bascule(hass, entry, "auto")
+    await avancer(hass, freezer, entry, 1)
+    assert len(appels["on"]) == 1                                # 19,0 pour 20,5 : allumage tout de suite
+    assert any("sous la consigne" in a.data["message"] for a in appels["notif"])
+
+
+async def test_annuler_un_conseil_immediat_l_ignore(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.0", zone="chambre")
+    await _planning(hass)
+    p = entry.runtime_data
+    assert p.plan.immediat
+    await hass.services.async_call("button", "press", {"entity_id": eid(hass, entry, "button", "annuler")}, blocking=True)
+    await bascule(hass, entry, "auto")
+    assert appels["on"] == [] and not p.plan.immediat
+
+
+async def test_arret_anticipe_si_la_consigne_va_baisser(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 22:00:00+01:00", temp="20.6", zone="chambre")
+    await _planning(hass)
+    await bascule(hass, entry, "arret_auto")
+    poele(hass, "Heating")
+    await avancer(hass, freezer, entry, 1)
+    await avancer(hass, freezer, entry, 5)
+    x = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["arret"]
+    piece = [c for c in x["conditions"] if c["id"] == "pieces"][0]["pieces"][0]
+    assert piece["anticipe"] and piece["requis"] == 17.3         # 22:30 abaisse la consigne à 17 dans moins de 45 min
+    assert piece["ok"]
+
+
+async def test_planning_persiste_et_valide(hass, freezer):
+    entry, _ = await installer(hass, freezer, zone="chambre")
+    await _planning(hass, planning={"0": [{"h": "25:00", "c": 20}, {"h": "07:00", "c": 99}, {"h": "07:00", "c": 20.3}]})
+    assert entry.runtime_data.planning["chambre"] == {"0": [{"h": "07:00", "c": 20.5}]}
+    assert entry.runtime_data._export()["planning"]["chambre"]
+    await _planning(hass, planning={})
+    assert "chambre" not in entry.runtime_data.planning

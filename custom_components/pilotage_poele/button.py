@@ -3,11 +3,12 @@ from __future__ import annotations
 from homeassistant.components.button import ButtonEntity
 
 from .entity import PoeleEntity
+from .planning import ZONES
 
 
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
     p = entry.runtime_data
-    async_add_entities([Allumer(p), Annuler(p)])
+    async_add_entities([Allumer(p), Annuler(p)] + [RetourPlanning(p, z) for z in ZONES])
 
 
 class Allumer(PoeleEntity, ButtonEntity):
@@ -24,3 +25,14 @@ class Annuler(PoeleEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.p.annuler()
+
+
+class RetourPlanning(PoeleEntity, ButtonEntity):
+    """Annule la dérogation d'une zone et revient au planning."""
+
+    def __init__(self, p, zone: str) -> None:
+        super().__init__(p, f"retour_planning_{zone}")
+        self._zone = zone
+
+    async def async_press(self) -> None:
+        await self.p.retour_planning(self._zone)
