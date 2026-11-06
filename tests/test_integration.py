@@ -254,3 +254,18 @@ async def test_conditions_arret_affichees(hass, freezer):
     await avancer(hass, freezer, entry, 5)
     x = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["arret"]
     assert x["arret_prevu"] is None and not x["pieces_ok"]
+
+
+async def test_amorce_une_seule_fois_depuis_historique(hass, freezer):
+    entry, appels = await installer(hass, freezer)
+    p = entry.runtime_data
+    p.appris.pieces.clear()
+    p.amorce = False
+    t = 1_000_000
+    p.historique = [[t + k * 300, 0, None, None, [20.0 - 0.2 * (k * 300) / 3600] * len(p.pieces_cfg())] for k in range(60)]
+    p._amorcer()
+    assert p.amorce and p.bilan_amorce["refroid"] >= 1
+    n = p.appris.pieces[p.pieces_cfg()[0][0]]["n_refroid"]
+    p._amorcer()
+    assert p.appris.pieces[p.pieces_cfg()[0][0]]["n_refroid"] == n     # pas de double apprentissage
+    assert p._export()["amorce"] is True

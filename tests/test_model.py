@@ -113,3 +113,28 @@ def test_fichiers_json_valides():
         json.loads(f.read_text(encoding="utf-8"))
     fr = json.loads((base / "translations" / "fr.json").read_text(encoding="utf-8"))
     assert fr["options"]["step"]["init"]["data"]["hysteresis"].startswith("Marge")
+
+
+def test_amorcer_depuis_historique():
+    from custom_components.pilotage_poele.model import ETATS, Appris, amorcer_depuis_historique
+    a, m, r = ETATS.index("arret"), ETATS.index("marche"), ETATS.index("allumage")
+    h, t = [], 0
+    def seg(n, etat, t0, pente_h):
+        nonlocal t
+        for k in range(n):
+            t += 300
+            h.append([t, etat, None, None, [t0 + pente_h * (k * 300) / 3600]])
+    seg(60, a, 20.0, -0.2)                 # 5 h d'arrêt : refroidissement 0,2 °C/h
+    seg(3, r, 17.0, 0.0)                   # 15 min d'allumage
+    seg(36, m, 17.0, 0.8)                  # 3 h de marche : +0,8 °C/h
+    seg(60, a, 20.0, -0.1)
+    ap = Appris()
+    b = amorcer_depuis_historique(h, ["Salon"], {"Salon": 20.5}, ap)
+    assert b["refroid"] == 2 and b["montee"] == 1 and b["delais"] == 1
+    assert ap.refroid("Salon")[1] and 0.1 < ap.refroid("Salon")[0] < 0.2
+    assert abs(ap.montee("Salon")[0] - 0.8) < 0.1
+    assert ap.delai_allumage()[1]
+    # pièce déjà au-dessus de sa cible : pas de montée apprise
+    ap2 = Appris()
+    b2 = amorcer_depuis_historique(h, ["Salon"], {"Salon": 15.0}, ap2)
+    assert b2["montee"] == 0

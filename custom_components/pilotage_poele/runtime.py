@@ -17,7 +17,8 @@ from .const import (
     DOMAIN, ECHANTILLON_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
 )
 from .model import (
-    ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, classer, echeances, garde_fous, pente, planifier,
+    ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, amorcer_depuis_historique, classer, echeances,
+    garde_fous, pente, planifier,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +66,8 @@ class Pilote:
         self._cmd_off_ts: float | None = None
         self._stable_depuis: float | None = None
         self._dernier_echantillon = 0.0
+        self.amorce = False
+        self.bilan_amorce: dict[str, int] | None = None
         self._unsubs: list[Callable[[], None]] = []
         self._verrou_tick = asyncio.Lock()
 
@@ -97,14 +100,36 @@ class Pilote:
         self.cmd = d.get("cmd")
         self.run = d.get("run")
         self._cmd_off_ts = d.get("cmd_off")
+        self.amorce = bool(d.get("amorce", False))
         ids = [self.cfg[CONF_POELE]] + [self.cfg.get(k) for k in (CONF_STATUT, CONF_EAU, CONF_EXTERIEUR)]
         for _, c in self.pieces_cfg():
             ids += [c.get(CONF_TEMPERATURE), c.get(CONF_CIBLE)]
         ids = [i for i in ids if i]
         self._unsubs.append(async_track_state_change_event(self.hass, ids, self._changement))
         self._unsubs.append(async_track_time_interval(self.hass, self._tick, timedelta(seconds=TICK_S)))
+        self._reconstruire_echantillons()
+        self._amorcer()
         self.etat = self._lire_etat()
         await self._tick(None)
+
+    def _reconstruire_echantillons(self) -> None:
+        """Remet en mémoire les températures déjà enregistrées (sinon un redémarrage fait perdre les cycles en cours)."""
+        noms = [n for n, _ in self.pieces_cfg()]
+        for j, nom in enumerate(noms):
+            self.echantillons[nom] = [(float(h[0]), float(h[4][j])) for h in self.historique
+                                      if len(h) >= 5 and isinstance(h[4], list) and len(h[4]) == len(noms)
+                                      and h[4][j] is not None]
+
+    def _amorcer(self) -> None:
+        """Une seule fois : apprend ce qui est déjà visible dans l'historique (refroidissement, montées, délai)."""
+        if self.amorce or not self.historique:
+            return
+        self.amorce = True
+        noms = [n for n, _ in self.pieces_cfg()]
+        cibles = {m.nom: m.cible for m in self._mesures()}
+        self.bilan_amorce = amorcer_depuis_historique(self.historique, noms, cibles, self.appris)
+        _LOGGER.info("Pilotage poêle : apprentissage initial depuis l'historique : %s", self.bilan_amorce)
+        self._sauver()
 
     async def async_arreter(self) -> None:
         for u in self._unsubs:
@@ -117,7 +142,7 @@ class Pilote:
             "appris": self.appris.to_dict(), "drapeaux": self.drapeaux, "journal": self.journal[-JOURNAL_MAX:],
             "historique": self.historique[-HISTO_MAX:], "dernier_arret": self.dernier_arret,
             "allumages": self.allumages, "ignore_echeance": self.ignore_echeance, "cmd": self.cmd, "run": self.run,
-            "cmd_off": self._cmd_off_ts,
+            "cmd_off": self._cmd_off_ts, "amorce": self.amorce,
         }
 
     def _sauver(self) -> None:

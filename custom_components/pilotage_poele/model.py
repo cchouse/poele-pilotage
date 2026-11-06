@@ -272,3 +272,54 @@ def garde_fous(now: datetime, etat: str, p: Params, allumages_aujourdhui: int, d
     if plan is not None and plan.echeance is not None and ignore_echeance is not None and abs(plan.echeance.timestamp() - ignore_echeance) < 1:
         return False, "Allumage annulé par vous pour cette échéance."
     return True, "Toutes les conditions sont réunies."
+
+
+def amorcer_depuis_historique(historique: list, noms: list[str], cibles: dict[str, float | None],
+                              appris: "Appris") -> dict[str, int]:
+    """Apprend à partir de l'historique déjà enregistré (lignes [ts, état, eau, ext, [températures]]).
+
+    Mêmes règles que l'apprentissage en direct : refroidissement mesuré sur les arrêts d'au moins 3 h
+    (1 h de repos ignorée), montée mesurée sur les marches (30 min après le passage en marche) si la pièce
+    n'était pas déjà au-dessus de sa cible, délai d'allumage entre l'état « allumage » et « marche ».
+    """
+    lignes = [h for h in historique if len(h) >= 5 and isinstance(h[4], list) and len(h[4]) == len(noms)]
+    bilan = {"refroid": 0, "montee": 0, "delais": 0}
+    if len(lignes) < 8:
+        return bilan
+    i_arret, i_allum, i_marche = ETATS.index("arret"), ETATS.index("allumage"), ETATS.index("marche")
+    # découpe en segments d'état homogène (allumage et marche regroupés en « marche du poêle »)
+    segs: list[list] = []   # [type, début, fin, i0, i1]
+    for k, h in enumerate(lignes):
+        e = h[1]
+        t = "arret" if e == i_arret else ("on" if e in (i_allum, i_marche) else "autre")
+        if segs and segs[-1][0] == t and h[0] - lignes[k - 1][0] < 1800:
+            segs[-1][2], segs[-1][4] = h[0], k
+        else:
+            segs.append([t, h[0], h[0], k, k])
+    for t, deb, fin, i0, i1 in segs:
+        sub = lignes[i0:i1 + 1]
+        if t == "arret" and fin - deb >= 3 * 3600:
+            for j, nom in enumerate(noms):
+                ech = [(h[0], h[4][j]) for h in sub if h[4][j] is not None]
+                p = pente(ech, deb + 3600, fin)
+                if p is not None and p < 0:
+                    appris.maj_refroid(nom, -p)
+                    bilan["refroid"] += 1
+        elif t == "on":
+            tm = next((h[0] for h in sub if h[1] == i_marche), None)
+            if tm is None:
+                continue
+            ta = next((h[0] for h in sub if h[1] == i_allum), None)
+            if ta is not None and ta < tm:
+                before = len(appris.delais)
+                appris.ajouter_delai((tm - ta) / 60.0)
+                bilan["delais"] += len(appris.delais) - before
+            for j, nom in enumerate(noms):
+                ech = [(h[0], h[4][j]) for h in sub if h[4][j] is not None]
+                t0 = next((v for ts_, v in ech if ts_ >= tm), None)
+                cible = cibles.get(nom)
+                p = pente(ech, tm + 1800, fin)
+                if p is not None and p > 0 and t0 is not None and (cible is None or t0 < cible - 0.2):
+                    appris.maj_montee(nom, p)
+                    bilan["montee"] += 1
+    return bilan
