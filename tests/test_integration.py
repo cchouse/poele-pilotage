@@ -189,6 +189,7 @@ async def test_apprentissage_de_la_montee_et_journal(hass, freezer):
         await avancer(hass, freezer, entry, 5)
     poele(hass, "Cleaning")
     await avancer(hass, freezer, entry, 5)
+    await avancer(hass, freezer, entry, 11)               # la sortie dure : le cycle est clos
     p = entry.runtime_data
     mont, appris = p.appris.montee("Chambre")
     assert appris and 0.4 < mont < 0.8
@@ -382,3 +383,20 @@ async def test_planning_persiste_et_valide(hass, freezer):
     assert entry.runtime_data._export()["planning"]["chambre"]
     await _planning(hass, planning={})
     assert "chambre" not in entry.runtime_data.planning
+
+
+async def test_nettoyage_court_ne_remet_pas_les_compteurs_a_zero(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 10:00:00+01:00", temp="21.0", cible="20.5")
+    await bascule(hass, entry, "arret_auto")
+    poele(hass, "Heating")
+    await avancer(hass, freezer, entry, 1)
+    p = entry.runtime_data
+    marche0 = p.run["marche"]
+    for _ in range(8):                                    # toutes les 12 min : 3 min de nettoyage du brasero
+        await avancer(hass, freezer, entry, 12)
+        poele(hass, "Cleaning")
+        await avancer(hass, freezer, entry, 3)
+        poele(hass, "Heating")
+        await avancer(hass, freezer, entry, 1)
+    assert p.run is not None and p.run["marche"] == marche0 and not p.journal
+    assert len(appels["off"]) >= 1                        # 128 min de marche : l'arrêt automatique a bien fini par se déclencher

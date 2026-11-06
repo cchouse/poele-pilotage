@@ -1,7 +1,7 @@
 """Constantes de l'intégration Pilotage poêle."""
 DOMAIN = "pilotage_poele"
 SUBENTRY_PIECE = "piece"
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 URL_CARTE = "/pilotage_poele/pilotage-poele-card.js"
 
 # configuration principale
@@ -36,5 +36,6 @@ OPTIONS_DEFAUT = {
 
 TICK_S = 60
 ECHANTILLON_S = 300
+GRACE_FIN_CYCLE_S = 600      # un cycle n'est clos que si le poêle reste hors marche 10 min (nettoyages du brasero)
 HISTO_MAX = 288              # 24 h à 5 min
 JOURNAL_MAX = 30

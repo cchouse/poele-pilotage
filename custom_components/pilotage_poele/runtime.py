@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_CIBLE, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, CONF_ZONE,
-    DOMAIN, ECHANTILLON_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
+    DOMAIN, ECHANTILLON_S, GRACE_FIN_CYCLE_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
 )
 from .model import (
     ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, amorcer_depuis_historique, classer, echeances,
@@ -278,6 +278,9 @@ class Pilote:
         if nouveau != self.etat:
             await self._transition(self.etat, nouveau, ts, mesures)
             self.etat = nouveau
+        if self.run and self.run.get("sorti") and self.etat in ("arret", "extinction") \
+                and ts - self.run["sorti"] >= GRACE_FIN_CYCLE_S:
+            self._terminer_run(self.run["sorti"], mesures)   # vraie fin : le poêle n'est pas revenu en marche
         self._apprendre_refroidissement(ts, mesures)
         # sécurités d'abord (elles peuvent verrouiller), puis plan, garde-fous et décision
         await self._securites(now, ts, mesures)
@@ -358,8 +361,10 @@ class Pilote:
             if self.cmd:
                 self.appris.ajouter_delai((ts - self.cmd["ts"]) / 60.0)
                 self.cmd = None
+        if self.run is not None and nouveau in ("allumage", "marche"):
+            self.run.pop("sorti", None)        # retour en marche : simple nettoyage de brasero, le cycle continue
         if self.run is not None and nouveau in ("arret", "extinction") and ancien in ("allumage", "marche", "inconnu"):
-            self._terminer_run(ts, mesures)
+            self.run.setdefault("sorti", ts)   # on ne clôt le cycle que si la sortie dure (voir _tick_interne)
         if nouveau == "arret" and ancien in ("allumage", "marche", "extinction"):
             self.dernier_arret = ts   # arrêt complet constaté
         if nouveau == "arret":
@@ -416,8 +421,9 @@ class Pilote:
             await self._notifier(f"Poêle : arrêt de sécurité après {round(float(o['marche_max']))} minutes de marche.")
         # arrêt automatique (si activé) : toutes les pièces au-dessus de cible + hystérésis depuis 15 min
         c = self.conditions_arret(ts, mesures)
-        if self.drapeaux["arret_auto"] and self.etat == "marche" and self.run and self.run.get("marche"):
-            self._stable_depuis = (self._stable_depuis or ts) if c["pieces_ok"] else None
+        if self.drapeaux["arret_auto"] and self.run and self.run.get("marche"):
+            if self.etat == "marche":      # une courte interruption (nettoyage) ne remet pas les compteurs à zéro
+                self._stable_depuis = (self._stable_depuis or ts) if c["pieces_ok"] else None
             c = self.conditions_arret(ts, mesures)
             if c["declenche"]:
                 await self._commande("turn_off", "arret_auto")
@@ -430,8 +436,9 @@ class Pilote:
         o = self.opt
         marche_min = float(o["marche_min"])
         hyst = float(o["hysteresis"])
-        en_marche = self.etat == "marche" and bool(self.run and self.run.get("marche"))
-        t_marche = (ts - self.run["marche"]) if en_marche else None
+        cycle = bool(self.run and self.run.get("marche"))
+        en_marche = self.etat == "marche" and cycle
+        t_marche = (ts - self.run["marche"]) if cycle else None
         # si la consigne baisse dans les 45 prochaines minutes, on vise déjà la plus basse : l'inertie finira le travail
         plus_tard = {m.nom: m.cible for m in self._mesures(dt_util.as_local(dt_util.utc_from_timestamp(ts + 45 * 60)))}
         mesurables = [m for m in mesures if m.temperature is not None and m.cible is not None]
@@ -447,7 +454,7 @@ class Pilote:
         stable_ok = pieces_ok and stable >= 15 * 60
         declenche = bool(self.drapeaux["arret_auto"] and en_marche and duree_ok and pieces_ok and stable_ok and not off_recent)
         prevu = None
-        if self.drapeaux["arret_auto"] and en_marche and pieces_ok:
+        if self.drapeaux["arret_auto"] and cycle and pieces_ok:
             prevu = max(self.run["marche"] + marche_min * 60, (self._stable_depuis or ts) + 15 * 60)
         return {
             "declenche": declenche, "pieces_ok": pieces_ok, "arret_prevu": None if prevu is None else int(prevu),
