@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -47,9 +47,9 @@ details p, details ul { margin:0 0 12px; font-size:.9rem; color:var(--primary-te
 ha-card { display:block; container-type:inline-size; }
 .grille { display:grid; grid-template-columns:1fr; gap:0 18px; align-items:start; }
 .c1, .c2, .c3 { min-width:0; }
-@container (min-width: 640px) { .grille { grid-template-columns:1fr 1fr; } .c3 { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:0 18px; align-items:start; } .c3 > * { min-width:0; } }
+@container (min-width: 520px) { .grille { grid-template-columns:1fr 1fr; } .c3 { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:0 18px; align-items:start; } .c3 > * { min-width:0; } }
 .c3 > details { grid-column:1 / -1; }
-@container (min-width: 1000px) { .grille { grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) minmax(0,1fr); } .c3 { grid-column:auto; display:block; } }
+@container (min-width: 880px) { .grille { grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) minmax(0,1fr); } .c3 { grid-column:auto; display:block; } }
 .zt { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:8px 0; }
 button.zb { min-height:48px; border-radius:12px; border:2px solid var(--divider-color); background:transparent; font-weight:600; }
 button.zb[aria-pressed="true"] { border-color:var(--primary-color); background:color-mix(in srgb, var(--primary-color) 14%, transparent); }
@@ -83,7 +83,7 @@ class PilotagePoeleCard extends HTMLElement {
     if (this._ro || typeof ResizeObserver === "undefined") return;
     this._large = null;
     this._ro = new ResizeObserver(() => {
-      const large = this.offsetWidth >= 640;
+      const large = this.offsetWidth >= 520;
       if (this._large !== null && large !== this._large && this._hass) { this._cle = null; this.hass = this._hass; }
       this._large = large;
     });
@@ -140,13 +140,14 @@ class PilotagePoeleCard extends HTMLElement {
       ${z && z.derogation ? `<button class="b" id="retour" style="width:100%;margin-top:6px">↩ Revenir au planning</button>` : ""}
       <div class="petit" style="margin-top:6px">${z && z.prochain ? `Prochain changement : ${hhmm(z.prochain.ts)} → ${fmt(z.prochain.c)} °C.` : "Aucun changement prévu."} ${auj.length ? "Aujourd'hui : " + auj.map((t) => `${t.h} → ${fmt(t.c)} °C`).join(" · ") : ""}</div>
       <div class="petit">Un + ou − change la consigne jusqu'à la prochaine tranche, puis le planning reprend.</div>
-      <details open><summary>Modifier le planning de la zone ${esc(z ? z.nom : "")}</summary>
+      <details id="edd" ${ed.ouvert || sale ? "open" : ""}><summary>Modifier le planning de la zone ${esc(z ? z.nom : "")}</summary>
         <div class="jr" role="group" aria-label="Jour">${JOURS.map((j, i) => `<button class="j" data-j="${i}" aria-pressed="${i === ed.jour}" aria-label="${LONG[i]}">${j}</button>`).join("")}</div>
         <div class="petit">Tranches du ${LONG[ed.jour]} : la consigne s'applique à partir de l'heure indiquée.</div>
         ${lignes}
         <div class="actions"><button class="b" id="ajout">+ Ajouter une tranche</button><button class="b" id="copie">Copier sur toute la semaine</button></div>
         <div class="actions"><button class="b" id="enreg" ${sale ? "" : "disabled"}>✓ Enregistrer</button><button class="b" id="annul" ${sale ? "" : "disabled"}>✕ Annuler les modifications</button></div>
         <div class="petit ok" role="status">${sale ? "Modifications non enregistrées." : ""}</div></details>`;
+    n.querySelector("#edd")?.addEventListener("toggle", (e) => { ed.ouvert = e.target.open; });
     const R = (sel, f) => n.querySelectorAll(sel).forEach((e) => e.addEventListener("click", () => f(e)));
     R("[data-z]", (e) => { ed.zone = e.dataset.z; this._dessinerPlan(); });
     R("[data-j]", (e) => { ed.jour = Number(e.dataset.j); this._dessinerPlan(); });
@@ -238,7 +239,7 @@ class PilotagePoeleCard extends HTMLElement {
     const da = a.derniere_action;
     const inter = (cle, lib) => `<button class="t" id="${cle}" aria-pressed="${!!d[cle]}" ${b[cle] ? "" : "disabled"}><span>${lib}</span><span>${d[cle] ? "● Activé" : "○ Désactivé"}</span></button>`;
     const eauHtml = a.eau != null || (a.historique || []).some((x) => x[2] != null) ? `<div class="sec"><h3>Eau du circuit : ${fmt(a.eau)} °C</h3>${this._courbes(a, "e", "de l'eau", (h) => [{ nom: "Eau", pts: h.map((x) => [x[0], x[2]]) }])}</div>` : "";
-    const ouvert = this.offsetWidth >= 640 ? "open" : "";
+    const ouvert = "";
     r.innerHTML = `<style>${STYLE}</style><ha-card>
       <div class="tete"><span class="titre">Poêle à granulés</span><span class="puce ${pb ? "pb" : ""}"><span aria-hidden="true">${ICONE[a.etat] || "?"}</span> ${esc(a.etat_libelle)}</span></div>
       ${d.verrou ? `<div class="bandeau" role="alert" style="margin-bottom:10px;border-color:var(--error-color,#b3261e)"><b>⚠ Allumage automatique verrouillé</b> après un échec d'allumage. Vérifiez le poêle, puis réactivez l'allumage automatique.</div>` : ""}
@@ -256,6 +257,7 @@ class PilotagePoeleCard extends HTMLElement {
           <li>Arrêt de sécurité d'un allumage automatique : ${gf.marche_max} min</li><li>Jamais d'allumage dans les 20 minutes qui précèdent l'échéance</li></ul></details>
       </div>
       <div class="c2">
+        <div class="sec" id="planph"></div>
         <div class="sec"><h3>Le poêle sur 24 heures</h3>${this._frise(a)}</div>
         <div class="sec"><h3>Les pièces (la plus lente décide)</h3>${piecesHtml}</div>
         <details ${ouvert}><summary>Ce que j'ai appris (${Math.round((ap.confiance || 0) * 100)} % de confiance)</summary>
@@ -269,7 +271,6 @@ class PilotagePoeleCard extends HTMLElement {
           <p class="petit">État brut lu sur le poêle : « ${esc(a.statut_brut)} »</p></details>
       </div>
       </div>
-      <div class="sec" id="planph"></div>
     </ha-card>`;
     this._monterPlanning(a);
     r.getElementById("allumer")?.addEventListener("click", () => this._appel("button", "press", b.allumer));
