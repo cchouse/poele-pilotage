@@ -1,7 +1,7 @@
 """Constantes de l'intégration Pilotage poêle."""
 DOMAIN = "pilotage_poele"
 SUBENTRY_PIECE = "piece"
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 URL_CARTE = "/pilotage_poele/pilotage-poele-card.js"
 
 # configuration principale

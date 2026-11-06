@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -123,6 +123,20 @@ class PilotagePoeleCard extends HTMLElement {
       <text x="${pad}" y="10" font-size="9" fill="var(--secondary-text-color)">${fmt(hi, 0)} °C</text><text x="${pad}" y="${H - 1}" font-size="9" fill="var(--secondary-text-color)">${fmt(lo, 0)} °C</text></svg><div class="lg">${lg}</div>`;
   }
 
+  _arret(a) {
+    const x = a.arret;
+    if (!x || !["allumage", "marche"].includes(a.etat)) return "";
+    const li = (c) => {
+      const sub = c.id === "pieces" && c.pieces ? `<ul>${c.pieces.map((p) => `<li>${p.ok ? "✓" : "✗"} ${esc(p.nom)} : ${fmt(p.temperature)} °C (il faut ${fmt(p.requis)} °C)</li>`).join("")}</ul>` : "";
+      return `<li>${c.ok ? "✓" : "✗"} ${esc(c.libelle)}${c.detail ? ` — ${esc(c.detail)}` : ""}${sub}</li>`;
+    };
+    const t = x.declenche ? "Conditions réunies : arrêt imminent"
+      : x.arret_prevu ? `Arrêt prévu vers ${hhmm(x.arret_prevu)} si rien ne change`
+      : (x.conditions[0].ok ? "Arrêt automatique : en attente des conditions" : "Arrêt automatique désactivé : le poêle ne s'arrêtera pas seul");
+    const sec = x.securite_min ? `<li>Sécurité : arrêt après ${x.securite_min} min de marche (allumage automatique)</li>` : "";
+    return `<details open><summary>${esc(t)}</summary><ul>${x.conditions.map(li).join("")}${sec}<li>Vous pouvez aussi éteindre à tout moment avec « Annuler / éteindre ».</li></ul></details>`;
+  }
+
   _dessiner(st) {
     const r = this.shadowRoot;
     if (!st) { r.innerHTML = `<style>${STYLE}</style><ha-card><p>Entité introuvable : ${esc(this._config.entity)}</p></ha-card>`; return; }
@@ -154,6 +168,7 @@ class PilotagePoeleCard extends HTMLElement {
         <div class="actions"><button class="b" id="allumer" ${b.allumer ? "" : "disabled"}>▶ Allumer maintenant</button>
           <button class="b" id="annuler" ${b.annuler ? "" : "disabled"}>${actif ? "■ Annuler / éteindre" : "✕ Annuler l'allumage prévu"}</button></div>
         <div class="inter">${inter("auto", "Allumage automatique")}${inter("arret_auto", "Arrêt automatique")}${inter("absent", "Mode absent")}</div>
+        ${this._arret(a)}
         <details ${ouvert}><summary>Garde-fous actifs</summary><ul>
           <li>Allumage automatique autorisé entre ${esc(gf.fenetre)}</li><li>Allumages automatiques aujourd'hui : ${gf.allumages_aujourdhui} / ${gf.max_allumages}</li>
           <li>Attente minimale entre deux allumages : ${gf.arret_min} min</li><li>Marche minimale avant arrêt automatique : ${gf.marche_min} min</li>

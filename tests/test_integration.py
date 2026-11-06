@@ -235,3 +235,22 @@ async def test_reconfigurer_le_poele_et_la_piece(hass, freezer):
     r = await hass.config_entries.subentries.async_init((entry.entry_id, SUBENTRY_PIECE),
                                                         context={"source": "reconfigure", "subentry_id": sub.subentry_id})
     voluptuous_serialize.convert(r["data_schema"], custom_serializer=cv.custom_serializer)
+
+
+async def test_conditions_arret_affichees(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 10:00:00+01:00", temp="21.0", cible="20.5")
+    await bascule(hass, entry, "arret_auto")
+    poele(hass, "Heating")
+    await avancer(hass, freezer, entry, 1)
+    await avancer(hass, freezer, entry, 30)
+    x = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["arret"]
+    ids = {c["id"]: c for c in x["conditions"]}
+    assert ids["actif"]["ok"] and ids["marche"]["ok"] and ids["pieces"]["ok"]
+    assert not ids["duree"]["ok"] and not x["declenche"]
+    assert x["arret_prevu"] is not None                  # attendu : fin des 90 min de marche
+    assert ids["pieces"]["pieces"][0]["requis"] == 20.8
+    # une pièce trop froide : plus d'heure prévue
+    hass.states.async_set(TEMP, "20.6")
+    await avancer(hass, freezer, entry, 5)
+    x = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["arret"]
+    assert x["arret_prevu"] is None and not x["pieces_ok"]

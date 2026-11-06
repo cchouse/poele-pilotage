@@ -276,19 +276,50 @@ class Pilote:
             await self._commande("turn_off", "securite")
             await self._notifier(f"Poêle : arrêt de sécurité après {round(float(o['marche_max']))} minutes de marche.")
         # arrêt automatique (si activé) : toutes les pièces au-dessus de cible + hystérésis depuis 15 min
+        c = self.conditions_arret(ts, mesures)
         if self.drapeaux["arret_auto"] and self.etat == "marche" and self.run and self.run.get("marche"):
-            ok_duree = ts - self.run["marche"] >= float(o["marche_min"]) * 60
-            chaud = [m for m in mesures if m.temperature is not None and m.cible is not None]
-            tous = bool(chaud) and all(m.temperature >= m.cible + float(o["hysteresis"]) for m in chaud)
-            if tous:
-                self._stable_depuis = self._stable_depuis or ts
-            else:
-                self._stable_depuis = None
-            if ok_duree and tous and ts - (self._stable_depuis or ts) >= 15 * 60 and not self._off_recent(ts):
+            self._stable_depuis = (self._stable_depuis or ts) if c["pieces_ok"] else None
+            c = self.conditions_arret(ts, mesures)
+            if c["declenche"]:
                 await self._commande("turn_off", "arret_auto")
                 await self._notifier("Poêle éteint automatiquement : toutes les pièces ont atteint leur température.")
         else:
             self._stable_depuis = None
+
+    def conditions_arret(self, ts: float, mesures: list[PieceMesure]) -> dict[str, Any]:
+        """Toutes les conditions de l'arrêt automatique, avec leur état — sert à la décision ET à l'affichage."""
+        o = self.opt
+        marche_min = float(o["marche_min"])
+        hyst = float(o["hysteresis"])
+        en_marche = self.etat == "marche" and bool(self.run and self.run.get("marche"))
+        t_marche = (ts - self.run["marche"]) if en_marche else None
+        mesurables = [m for m in mesures if m.temperature is not None and m.cible is not None]
+        pieces = [{"nom": m.nom, "temperature": round(m.temperature, 2), "requis": round(m.cible + hyst, 2),
+                   "ok": m.temperature >= m.cible + hyst} for m in mesurables]
+        pieces_ok = bool(pieces) and all(p["ok"] for p in pieces)
+        stable = (ts - self._stable_depuis) if (self._stable_depuis and pieces_ok) else 0.0
+        off_recent = self._off_recent(ts)
+        duree_ok = t_marche is not None and t_marche >= marche_min * 60
+        stable_ok = pieces_ok and stable >= 15 * 60
+        declenche = bool(self.drapeaux["arret_auto"] and en_marche and duree_ok and pieces_ok and stable_ok and not off_recent)
+        prevu = None
+        if self.drapeaux["arret_auto"] and en_marche and pieces_ok:
+            prevu = max(self.run["marche"] + marche_min * 60, (self._stable_depuis or ts) + 15 * 60)
+        return {
+            "declenche": declenche, "pieces_ok": pieces_ok, "arret_prevu": None if prevu is None else int(prevu),
+            "conditions": [
+                {"id": "actif", "ok": bool(self.drapeaux["arret_auto"]), "libelle": "Arrêt automatique activé"},
+                {"id": "marche", "ok": en_marche, "libelle": "Poêle en marche (allumage terminé)"},
+                {"id": "duree", "ok": duree_ok, "libelle": f"Au moins {round(marche_min)} min de marche",
+                 "detail": None if t_marche is None else f"{round(t_marche / 60)} min"},
+                {"id": "pieces", "ok": pieces_ok, "libelle": f"Toutes les pièces à la cible + {hyst:g} °C",
+                 "pieces": pieces},
+                {"id": "stable", "ok": stable_ok, "libelle": "Maintenu pendant 15 min",
+                 "detail": f"{round(stable / 60)} min" if pieces_ok else "pas commencé"},
+            ],
+            "pas_recent": not off_recent,
+            "securite_min": round(float(o["marche_max"])) if self.run and self.run.get("source") == "auto" else None,
+        }
 
     def _off_recent(self, ts: float) -> bool:
         return self._cmd_off_ts is not None and ts - self._cmd_off_ts < 900
@@ -375,6 +406,7 @@ class Pilote:
                 "limitante": plan.limitante, "raison": plan.raison, "en_retard": plan.en_retard, "pieces": plan.pieces,
             },
             "autorisation": {"ok": ok, "raison": raison_gf},
+            "arret": self.conditions_arret(now.timestamp(), self._mesures()),
             "garde_fous": {
                 "fenetre": f"{o['fenetre_debut'][:5]}–{o['fenetre_fin'][:5]}", "max_allumages": o["max_allumages"],
                 "allumages_aujourdhui": self._allumages_aujourdhui(now), "marche_min": o["marche_min"],
