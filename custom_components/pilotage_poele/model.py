@@ -150,8 +150,7 @@ class Appris:
             k, k_appris = self.k_perte(nom)
             if k_appris:
                 return max(0.0, k * max(delta, 0.0)), True
-            if p and p.get("n_refroid", 0) > 0:
-                return max(0.0, p["refroid"]), True
+            # un refroidissement mesuré sans connaître l'extérieur n'a pas d'écart de référence : je l'ignore
             return min(0.6, max(0.03, REFROIDISSEMENT_DEFAUT * max(delta, 0.0) / EXT_REF_DELTA)), False
         if p and p.get("n_refroid", 0) > 0:
             return max(0.0, p["refroid"]), True
@@ -383,9 +382,9 @@ def amorcer_depuis_historique(historique: list, noms: list[str], cibles: dict[st
         if t == "arret" and fin - deb >= 3 * 3600:
             for j, nom in enumerate(noms):
                 ech = [(h[0], h[4][j]) for h in sub if h[4][j] is not None]
-                p = pente(ech, deb + 3600, fin)
+                p = pente(ech, deb + 5400, fin)
                 if p is not None and p < 0:
-                    delta = _delta(sub, ech, deb + 3600, fin)
+                    delta = _delta(sub, ech, deb + 5400, fin)
                     appris.maj_refroid(nom, -p, delta)
                     bilan["refroid"] += 1
         elif t == "on":

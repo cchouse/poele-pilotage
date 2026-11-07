@@ -217,3 +217,13 @@ def test_amorcer_apprend_avec_l_exterieur():
     assert a.pieces["c"].get("n_k", 0) == 1
     k, ok = a.k_perte("c")
     assert ok and 0.015 < k < 0.025
+
+
+def test_ancien_refroidissement_ignore_avec_exterieur():
+    a = Appris()
+    a.maj_refroid("c", 0.56)                                     # mesuré sans extérieur : écart de référence inconnu
+    assert a.refroid("c") == (0.56, True)                        # sans extérieur : on s'en sert comme avant
+    v, appris = a.refroid("c", 11.7)                             # avec extérieur : valeur par défaut ajustée à l'écart
+    assert not appris and abs(v - 0.15 * 11.7 / 12) < 1e-6
+    p = planifier(now(), now(8), [PieceMesure("c", 20.3, 20.5)], a, exterieur=8.6)
+    assert p.pieces[0]["besoin"] < 1.0                           # et non 2 °C comme avec 0,56 °C/h

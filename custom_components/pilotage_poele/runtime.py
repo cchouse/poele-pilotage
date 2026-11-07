@@ -564,9 +564,9 @@ class Pilote:
             return
         self._froid_appris_pour = self.dernier_arret
         for m in mesures:
-            p = pente(self.echantillons.get(m.nom, []), self.dernier_arret + 3600, ts)
+            p = pente(self.echantillons.get(m.nom, []), self.dernier_arret + 5400, ts)
             if p is not None and p < 0:
-                ext_m, int_m = self._moy_fenetre(m.nom, self.dernier_arret + 3600, ts)
+                ext_m, int_m = self._moy_fenetre(m.nom, self.dernier_arret + 5400, ts)
                 self.appris.maj_refroid(m.nom, -p, None if ext_m is None or int_m is None else int_m - ext_m)
         self._sauver()
 
@@ -834,7 +834,10 @@ class Pilote:
                 "pieces": {n: {"montee": self.appris.montee(n)[0], "appris": self.appris.montee(n)[1],
                                "n": self.appris.pieces.get(n, {}).get("n_montee", 0),
                                "tranches": {t: v["n"] for t, v in (self.appris.pieces.get(n, {}).get("montee_t") or {}).items()},
-                               "k": round(self.appris.k_perte(n)[0], 4), "k_appris": self.appris.k_perte(n)[1]}
+                               "k": round(self.appris.k_perte(n)[0], 4), "k_appris": self.appris.k_perte(n)[1],
+                               "n_k": self.appris.pieces.get(n, {}).get("n_k", 0),
+                               "refroid_ancien": round(self.appris.pieces.get(n, {}).get("refroid", 0), 2)
+                               if self.appris.pieces.get(n, {}).get("n_refroid", 0) > 0 else None}
                           for n in noms},
                 "confiance": self.appris.confiance(noms),
             },

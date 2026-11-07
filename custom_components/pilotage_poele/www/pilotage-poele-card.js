@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -298,7 +298,7 @@ class PilotagePoeleCard extends HTMLElement {
     const piecesHtml = ordre.map(ligne).join("") || `<div class="vide">Aucune pièce configurée.</div>`;
     const piecesOuvert = this._ouv && this._ouv.pieces === false ? "" : "open";
     const piecesTitre = p && p.besoin && concernees.size > 1 ? "Les pièces (la plus lente décide)" : "Les pièces";
-    const piecesAppris = Object.entries(ap.pieces || {}).map(([n, v]) => `<li>${esc(n)} : ${v.appris ? `montée apprise sur ${v.n} chauffe${v.n > 1 ? "s" : ""} (${fmt(v.montee)} °C/h)${Object.keys(v.tranches || {}).length ? " · " + Object.entries(v.tranches).map(([t, n]) => `${t} ${n}`).join(", ") : ""}` : "pas encore apprise (valeur par défaut)"}${v.k_appris ? ` · perte ${fmt(v.k * 10)} °C/h pour 10 °C d'écart` : ""}</li>`).join("");
+    const piecesAppris = Object.entries(ap.pieces || {}).map(([n, v]) => `<li>${esc(n)} : ${v.appris ? `montée apprise sur ${v.n} chauffe${v.n > 1 ? "s" : ""} (${fmt(v.montee)} °C/h)${Object.keys(v.tranches || {}).length ? " · " + Object.entries(v.tranches).map(([t, n]) => `${t} ${n}`).join(", ") : ""}` : "pas encore apprise (valeur par défaut)"}${v.k_appris ? ` · refroidissement appris sur ${v.n_k} arrêt${v.n_k > 1 ? "s" : ""} : ${fmt(v.k * 10)} °C/h pour 10 °C d'écart` : v.refroid_ancien != null ? ` · ancien refroidissement mesuré sans l'extérieur (${fmt(v.refroid_ancien, 2)} °C/h), ignoré tant que le nouveau n'est pas appris` : " · refroidissement : valeur par défaut"}</li>`).join("");
     const journal = (a.journal || []).map((j) => `<li>${jjmm(j.debut)} · ${esc(SOURCES[j.source] || j.source)} · ${j.duree_min} min${j.allumage_min != null ? ` (allumage ${j.allumage_min} min)` : ""}${Object.keys(j.pieces || {}).length ? " · montée " + Object.entries(j.pieces).map(([n, v]) => `${esc(n)} ${fmt(v)} °C/h`).join(", ") : ""}</li>`).join("") || `<li class="vide">Aucun cycle enregistré pour l'instant.</li>`;
     const da = a.derniere_action;
     const inter = (cle, lib) => `<button class="t" id="${cle}" aria-pressed="${!!d[cle]}" ${b[cle] ? "" : "disabled"}><span>${lib}</span><span>${d[cle] ? "● Activé" : "○ Désactivé"}</span></button>`;
