@@ -566,6 +566,19 @@ class Pilote:
             }
         return out
 
+    def _pieces_etat(self, now: datetime) -> list[dict[str, Any]]:
+        """Toutes les pièces, y compris celles que l'objectif en cours ne concerne pas."""
+        out = []
+        for nom, c in self.pieces_cfg():
+            z = c.get(CONF_ZONE)
+            cible = self._cible_piece(c, now)
+            out.append({
+                "nom": nom, "temperature": _float(self.hass, c.get(CONF_TEMPERATURE)),
+                "consigne": None if cible is None else round(cible, 2),
+                "zone": ZONES.get(z) if self._zone_active(z, now) else None,
+            })
+        return out
+
     # ---------- état pour l'interface ----------
     def snapshot(self) -> dict[str, Any]:
         now = dt_util.now()
@@ -585,6 +598,7 @@ class Pilote:
             "autorisation": {"ok": ok, "raison": raison_gf},
             "arret": self.conditions_arret(now.timestamp(), self._mesures()),
             "zones": self._zones_snapshot(now),
+            "pieces_etat": self._pieces_etat(now),
             "garde_fous": {
                 "fenetre": f"{o['fenetre_debut'][:5]}–{o['fenetre_fin'][:5]}", "max_allumages": o["max_allumages"],
                 "allumages_aujourdhui": self._allumages_aujourdhui(now), "marche_min": o["marche_min"],

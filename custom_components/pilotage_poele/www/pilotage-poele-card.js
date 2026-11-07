@@ -30,7 +30,7 @@ button:focus-visible { outline:3px solid var(--primary-color); outline-offset:2p
 .inter { display:grid; grid-template-columns:1fr; gap:8px; margin-top:12px; }
 button.t { min-height:48px; display:flex; justify-content:space-between; align-items:center; padding:0 14px; border-radius:12px; border:2px solid var(--divider-color); background:transparent; font-weight:600; text-align:left; }
 button.t[aria-pressed="true"] { border-color:var(--primary-color); background:color-mix(in srgb, var(--primary-color) 14%, transparent); }
-.sec { margin-top:18px; } .sec h3 { margin:0 0 6px; font-size:.95rem; font-weight:600; color:var(--primary-text-color); }
+.sec { margin-top:18px; } details.sec > summary { font-size:.95rem; } .sec h3 { margin:0 0 6px; font-size:.95rem; font-weight:600; color:var(--primary-text-color); }
 .petit { font-size:.8rem; color:var(--secondary-text-color); line-height:1.4; }
 svg.g { width:100%; height:auto; display:block; }
 .lg { display:flex; flex-wrap:wrap; gap:12px; font-size:.75rem; color:var(--secondary-text-color); margin-top:4px; }
@@ -232,8 +232,23 @@ class PilotagePoeleCard extends HTMLElement {
     else if (p && p.besoin && p.allumage) ban = `<div class="heure">${p.en_retard ? "Maintenant" : hhmm(p.allumage)}</div><div class="sous">${p.immediat ? "Besoin immédiat : une pièce est sous la consigne en cours" : `Prochain allumage conseillé — objectif ${hhmm(p.echeance)}`}</div><div class="pourquoi">${esc(p.raison)}</div>`;
     else ban = `<div class="heure">Pas d'allumage prévu</div><div class="pourquoi">${esc(p ? p.raison : "Je n'ai pas encore de pièce à surveiller : ajoutez une pièce depuis la page de l'intégration.")}</div>`;
     const mode = d.auto ? "Automatique : j'allume seul si toutes les conditions sont réunies" : "Mode conseil : rien n'est envoyé au poêle";
-    const piecesHtml = ((p && p.pieces) || []).map((x, i) => `<div class="piece ${i === 0 && p.besoin ? "lim" : ""}"><div class="l1"><span>${esc(x.nom)}${i === 0 && p.besoin ? " · la plus lente" : ""}</span><span>${fmt(x.temperature)} → ${fmt(x.cible)} °C</span></div>
-       <div class="l2">${x.besoin > 0.05 ? `manque ${fmt(x.besoin)} °C` : "à la cible"} · monte de ${fmt(x.montee)} °C/h ${x.montee_apprise ? "(appris)" : "(par défaut, pas encore appris)"} · ≈ ${x.duree_min} min de chauffe</div></div>`).join("") || `<div class="vide">Aucune pièce configurée.</div>`;
+    const concernees = new Map(((p && p.pieces) || []).map((x, i) => [x.nom, [x, i]]));
+    const toutes = a.pieces_etat || [];
+    const ligne = (x) => {
+      const c = concernees.get(x.nom);
+      if (c) { const [y, i] = c; const lim = i === 0 && p.besoin;
+        return `<div class="piece ${lim ? "lim" : ""}"><div class="l1"><span>${esc(y.nom)}${lim ? " · la plus lente" : ""}</span><span>${fmt(y.temperature)} → ${fmt(y.cible)} °C</span></div>
+       <div class="l2">${y.besoin > 0.05 ? `manque ${fmt(y.besoin)} °C` : "à la cible"} · monte de ${fmt(y.montee)} °C/h ${y.montee_apprise ? "(appris)" : "(par défaut, pas encore appris)"} · ≈ ${y.duree_min} min de chauffe</div></div>`; }
+      const ecart = x.consigne != null && x.temperature != null ? x.consigne - x.temperature : null;
+      const etat = x.consigne == null ? "pas de consigne" : ecart != null && ecart > 0.05 ? `manque ${fmt(ecart)} °C` : "à la consigne";
+      const quoi = p && p.besoin && p.echeance ? `pas concernée par l'objectif de ${hhmm(p.echeance)}` : "pas concernée par l'objectif en cours";
+      return `<div class="piece"><div class="l1"><span>${esc(x.nom)}</span><span>${fmt(x.temperature)} → ${x.consigne == null ? "—" : fmt(x.consigne) + " °C"}</span></div>
+       <div class="l2">${etat}${x.zone ? " · zone " + esc(x.zone) : ""} · ${quoi}</div></div>`;
+    };
+    const ordre = toutes.length ? [...toutes.filter((x) => concernees.has(x.nom)).sort((u, v) => concernees.get(u.nom)[1] - concernees.get(v.nom)[1]), ...toutes.filter((x) => !concernees.has(x.nom))] : [];
+    const piecesHtml = ordre.map(ligne).join("") || `<div class="vide">Aucune pièce configurée.</div>`;
+    const piecesOuvert = this._ouv && this._ouv.pieces === false ? "" : "open";
+    const piecesTitre = p && p.besoin && concernees.size > 1 ? "Les pièces (la plus lente décide)" : "Les pièces";
     const piecesAppris = Object.entries(ap.pieces || {}).map(([n, v]) => `<li>${esc(n)} : ${v.appris ? `montée apprise sur ${v.n} chauffe${v.n > 1 ? "s" : ""} (${fmt(v.montee)} °C/h)` : "pas encore apprise (valeur par défaut)"}</li>`).join("");
     const journal = (a.journal || []).map((j) => `<li>${jjmm(j.debut)} · ${esc(SOURCES[j.source] || j.source)} · ${j.duree_min} min${j.allumage_min != null ? ` (allumage ${j.allumage_min} min)` : ""}${Object.keys(j.pieces || {}).length ? " · montée " + Object.entries(j.pieces).map(([n, v]) => `${esc(n)} ${fmt(v)} °C/h`).join(", ") : ""}</li>`).join("") || `<li class="vide">Aucun cycle enregistré pour l'instant.</li>`;
     const da = a.derniere_action;
@@ -259,7 +274,7 @@ class PilotagePoeleCard extends HTMLElement {
       <div class="c2">
         <div class="sec" id="planph"></div>
         <div class="sec"><h3>Le poêle sur 24 heures</h3>${this._frise(a)}</div>
-        <div class="sec"><h3>Les pièces (la plus lente décide)</h3>${piecesHtml}</div>
+        <details id="dpieces" class="sec" ${piecesOuvert}><summary>${piecesTitre} (${ordre.length})</summary>${piecesHtml}</details>
         <details ${ouvert}><summary>Ce que j'ai appris (${Math.round((ap.confiance || 0) * 100)} % de confiance)</summary>
           <ul><li>Délai d'allumage : ${ap.delai_appris ? `appris sur ${(ap.delais || []).length} essai(s), prudent ≈ ${Math.round(ap.delai_p80)} min` : "valeur par défaut 20 min, pas encore appris"}</li>${piecesAppris}</ul>
           <p class="petit">La confiance monte avec les allumages observés. Tant qu'une valeur est « par défaut », le calcul est volontairement prudent.</p></details>
@@ -273,6 +288,7 @@ class PilotagePoeleCard extends HTMLElement {
       </div>
     </ha-card>`;
     this._monterPlanning(a);
+    r.getElementById("dpieces")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { pieces: e.target.open }); });
     r.getElementById("allumer")?.addEventListener("click", () => this._appel("button", "press", b.allumer));
     r.getElementById("annuler")?.addEventListener("click", () => this._appel("button", "press", b.annuler));
     for (const cle of ["auto", "arret_auto", "absent"]) r.getElementById(cle)?.addEventListener("click", () => this._appel("switch", d[cle] ? "turn_off" : "turn_on", b[cle]));
