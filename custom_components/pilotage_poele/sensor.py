@@ -22,7 +22,7 @@ class Etat(PoeleEntity, SensorEntity):
     _attr_options = list(ETATS)
     _unrecorded_attributes = frozenset({
         "plan", "autorisation", "garde_fous", "appris", "historique", "journal", "derniere_action", "run",
-        "arret", "zones", "eau", "exterieur", "pieces_noms", "drapeaux", "etat_libelle", "statut_brut", "boutons"})
+        "arret", "zones", "eau", "exterieur", "pieces_noms", "drapeaux", "etat_libelle", "statut_brut", "boutons", "pieces_etat", "tetes"})
 
     def __init__(self, p) -> None:
         super().__init__(p, "etat")
@@ -43,6 +43,7 @@ class Etat(PoeleEntity, SensorEntity):
             "auto": reg.async_get_entity_id("switch", "pilotage_poele", f"{e}_auto"),
             "arret_auto": reg.async_get_entity_id("switch", "pilotage_poele", f"{e}_arret_auto"),
             "absent": reg.async_get_entity_id("switch", "pilotage_poele", f"{e}_absent"),
+            "tetes": reg.async_get_entity_id("switch", "pilotage_poele", f"{e}_tetes"),
         }
         return snap
 

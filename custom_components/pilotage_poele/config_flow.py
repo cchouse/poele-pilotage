@@ -91,6 +91,11 @@ def _schema_options(d: dict[str, Any]) -> vol.Schema:
         vol.Required("hysteresis", default=d["hysteresis"]): num(0, 2, 0.1, "°C"),
         vol.Required("immediat_actif", default=d["immediat_actif"]): selector.BooleanSelector(),
         vol.Required("seuil_immediat", default=d["seuil_immediat"]): num(0.2, 3, 0.1, "°C"),
+        vol.Optional("tetes_chambre", description={"suggested_value": d.get("tetes_chambre") or []}): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="climate", multiple=True)),
+        vol.Optional("tetes_maison", description={"suggested_value": d.get("tetes_maison") or []}): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="climate", multiple=True)),
+        vol.Required("tetes_decalage", default=d["tetes_decalage"]): num(-3, 3, 0.5, "°C"),
     })
 
 

@@ -18,7 +18,7 @@ def eid(hass, entry, domaine, cle):
     return er.async_get(hass).async_get_entity_id(domaine, DOMAIN, f"{entry.entry_id}_{cle}")
 
 
-async def installer(hass, freezer, heure="2026-11-05 05:30:00+01:00", temp="17.0", cible="20.5", statut="Off", zone=None):
+async def installer(hass, freezer, heure="2026-11-05 05:30:00+01:00", temp="17.0", cible="20.5", statut="Off", zone=None, ecart=None):
     await hass.config.async_set_time_zone("Europe/Paris")
     freezer.move_to(heure)
     hass.states.async_set(POELE, "off", {"hvac_action": "off"})
@@ -36,6 +36,8 @@ async def installer(hass, freezer, heure="2026-11-05 05:30:00+01:00", temp="17.0
     r = await hass.config_entries.subentries.async_init((entry.entry_id, SUBENTRY_PIECE), context={"source": SOURCE_USER})
     donnees = {"name": "Chambre", CONF_TEMPERATURE: TEMP}
     donnees.update({"zone": zone} if zone else {CONF_CIBLE: CIBLE})
+    if ecart is not None:
+        donnees["ecart_declenchement"] = ecart
     r = await hass.config_entries.subentries.async_configure(r["flow_id"], donnees)
     assert r["type"] is FlowResultType.CREATE_ENTRY, r
     await hass.async_block_till_done()
@@ -315,6 +317,14 @@ async def test_planning_donne_la_consigne_et_l_echeance(hass, freezer):
     assert zones["chambre"]["source"] == "planning" and zones["chambre"]["prochain"]["c"] == 20.5
 
 
+async def test_toutes_les_pieces_sont_exposees(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 05:30:00+01:00", temp="17.0", zone="chambre")
+    await avancer(hass, freezer, entry, 1)
+    pe = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["pieces_etat"]
+    assert len(pe) == len(entry.runtime_data.pieces_cfg()) >= 1
+    assert {"nom", "temperature", "consigne", "zone"} <= set(pe[0])
+
+
 async def test_derogation_relance_un_conseil_immediat_puis_retour_planning(hass, freezer):
     entry, appels = await installer(hass, freezer, heure="2026-11-05 19:16:00+01:00", temp="19.5", zone="chambre")
     await _planning(hass, planning={str(j): [{"h": "06:30", "c": 19.5}, {"h": "22:30", "c": 17.0}] for j in range(7)})
@@ -351,6 +361,32 @@ async def test_allumage_automatique_immediat(hass, freezer):
     await avancer(hass, freezer, entry, 1)
     assert len(appels["on"]) == 1                                # 19,0 pour 20,5 : allumage tout de suite
     assert any("sous la consigne" in a.data["message"] for a in appels["notif"])
+
+
+async def test_ecart_propre_a_la_piece(hass, freezer):
+    # 19,0 pour 20,5 : il manque 1,5 °C
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.0", zone="chambre", ecart=2.0)
+    await _planning(hass)
+    p = entry.runtime_data
+    sub = next(iter(entry.subentries.values()))
+    assert sub.data["ecart_declenchement"] == 2.0
+    assert not p.plan.immediat                                   # 1,5 < 2,0 : la pièce attend
+    pe = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["pieces_etat"][0]
+    assert pe["ecart"] == 2.0 and pe["ecart_propre"] is True
+    hass.config_entries.async_update_subentry(entry, sub, data={**sub.data, "ecart_declenchement": 1.0})
+    await hass.async_block_till_done()                           # la modification recharge l'intégration
+    p = entry.runtime_data
+    await avancer(hass, freezer, entry, 1)
+    assert p.plan.immediat and "supérieur à 1,0" in p.plan.raison.replace(".", ",")
+
+
+async def test_ecart_vide_prend_la_valeur_globale(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.0", zone="chambre")
+    await _planning(hass)
+    p = entry.runtime_data
+    assert p.plan.immediat                                       # 1,5 > 0,5 global
+    pe = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["pieces_etat"][0]
+    assert pe["ecart"] == 0.5 and pe["ecart_propre"] is False
 
 
 async def test_annuler_un_conseil_immediat_l_ignore(hass, freezer):
@@ -400,3 +436,99 @@ async def test_nettoyage_court_ne_remet_pas_les_compteurs_a_zero(hass, freezer):
         await avancer(hass, freezer, entry, 1)
     assert p.run is not None and p.run["marche"] == marche0 and not p.journal
     assert len(appels["off"]) >= 1                        # 128 min de marche : l'arrêt automatique a bien fini par se déclencher
+
+
+# ---------- têtes thermostatiques ----------
+TETE1, TETE2 = "climate.tete_1", "climate.tete_2"
+
+
+async def _tetes(hass, entry, **opts):
+    hass.config_entries.async_update_entry(entry, options={**entry.options, **opts})
+    await hass.async_block_till_done()                           # recharge l'intégration
+    return async_mock_service(hass, "climate", "set_temperature")
+
+
+async def test_tetes_recoivent_la_consigne_de_la_zone(hass, freezer):
+    hass.states.async_set(TETE1, "heat", {"min_temp": 7, "max_temp": 28})
+    hass.states.async_set(TETE2, "heat", {"min_temp": 7, "max_temp": 28})
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.0", zone="chambre")
+    await _planning(hass)
+    envois = await _tetes(hass, entry, tetes_chambre=[TETE1, TETE2])
+    p = entry.runtime_data
+    await avancer(hass, freezer, entry, 1)
+    assert sorted(a.data["entity_id"] for a in envois) == [TETE1, TETE2]
+    assert all(a.data["temperature"] == 20.5 for a in envois)
+    await avancer(hass, freezer, entry, 5)
+    assert len(envois) == 2                                      # rien de nouveau : pas de renvoi
+    info = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["tetes"]
+    assert info["actif"] and info["zones"]["chambre"]["nb"] == 2 and info["zones"]["chambre"]["c"] == 20.5
+    # dérogation : les têtes suivent tout de suite
+    await hass.services.async_call("pilotage_poele", "derogation", {"zone": "chambre", "consigne": 21.5}, blocking=True)
+    assert [a.data["temperature"] for a in envois[2:]] == [21.5, 21.5]
+    # fin de journée : tranche de 22:30 à 17 °C
+    freezer.move_to("2026-11-05 22:31:00+01:00")
+    await entry.runtime_data._tick(None)
+    assert envois[-1].data["temperature"] == 17.0
+
+
+async def test_tetes_decalage_et_limites(hass, freezer):
+    hass.states.async_set(TETE1, "heat", {"min_temp": 7, "max_temp": 21})
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.0", zone="chambre")
+    await _planning(hass)
+    envois = await _tetes(hass, entry, tetes_chambre=[TETE1], tetes_decalage=1.0)
+    await avancer(hass, freezer, entry, 1)
+    assert envois[-1].data["temperature"] == 21.0                # 20,5 + 1 = 21,5 ramené au maximum de la tête (21)
+
+
+async def test_tetes_interrupteur_et_reprise(hass, freezer):
+    hass.states.async_set(TETE1, "heat", {})
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.0", zone="chambre")
+    await _planning(hass)
+    envois = await _tetes(hass, entry, tetes_chambre=[TETE1])
+    await avancer(hass, freezer, entry, 1)
+    assert len(envois) == 1
+    await bascule(hass, entry, "tetes", on=False)
+    await hass.services.async_call("pilotage_poele", "derogation", {"zone": "chambre", "consigne": 22.0}, blocking=True)
+    assert len(envois) == 1                                      # désactivé : rien n'est envoyé
+    await bascule(hass, entry, "tetes", on=True)
+    assert envois[-1].data["temperature"] == 22.0                # réactivé : resynchronisation
+
+
+async def test_tete_indisponible_puis_retour(hass, freezer):
+    hass.states.async_set(TETE1, "unavailable")
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.0", zone="chambre")
+    await _planning(hass)
+    envois = await _tetes(hass, entry, tetes_chambre=[TETE1])
+    await avancer(hass, freezer, entry, 1)
+    assert envois == []
+    z = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["tetes"]["zones"]["chambre"]
+    assert z["ok"] is False and "indisponible" in z["erreur"]
+    hass.states.async_set(TETE1, "heat", {})
+    await avancer(hass, freezer, entry, 1)
+    assert len(envois) == 1 and envois[0].data["temperature"] == 20.5
+
+
+async def test_options_tetes_serialisables(hass, freezer):
+    import voluptuous_serialize
+    from homeassistant.helpers import config_validation as cv
+    entry, _ = await installer(hass, freezer)
+    r = await hass.config_entries.options.async_init(entry.entry_id)
+    out = voluptuous_serialize.convert(r["data_schema"], custom_serializer=cv.custom_serializer)
+    assert {"tetes_chambre", "tetes_maison", "tetes_decalage"} <= {x["name"] for x in out}
+    r = await hass.config_entries.options.async_configure(
+        r["flow_id"], {**{k: v for k, v in entry.options.items()}, "tetes_chambre": [TETE1], "tetes_decalage": 0.5,
+                       **{k: v for k, v in __import__("custom_components.pilotage_poele.const", fromlist=["x"]).OPTIONS_DEFAUT.items()
+                          if k not in ("tetes_chambre", "tetes_maison", "tetes_decalage")}})
+    assert r["type"] is FlowResultType.CREATE_ENTRY and r["data"]["tetes_chambre"] == [TETE1]
+
+
+async def test_exterieur_dans_le_plan(hass, freezer):
+    hass.states.async_set("sensor.ext", "2.0")
+    entry, _ = await installer(hass, freezer)
+    hass.config_entries.async_update_entry(entry, data={**entry.data, "exterieur": "sensor.ext"})
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    await avancer(hass, freezer, entry, 1)
+    p = entry.runtime_data.plan
+    assert p.exterieur == 2.0 and "Extérieur : 2,0 °C" in p.raison
+    assert p.pieces[0]["montee_source"] == "defaut_ext"

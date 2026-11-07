@@ -47,7 +47,10 @@
      "marge": "Marge de prudence (1,25 = +25 %)",
      "hysteresis": "Écart au-dessus de la cible pour l'arrêt (°C)",
      "immediat_actif": "Advise lighting as soon as a room is below the current setpoint",
-     "seuil_immediat": "Gap below setpoint that triggers (°C)"
+     "seuil_immediat": "Gap below setpoint that triggers (°C)",
+     "tetes_chambre": "Radiator valves of the Bedroom zone",
+     "tetes_maison": "Radiator valves of the House zone",
+     "tetes_decalage": "Offset added to the valve setpoint (°C)"
     }
    }
   }
@@ -128,6 +131,9 @@
    },
    "absent": {
     "name": "Away mode"
+   },
+   "tetes": {
+    "name": "Control the valves"
    }
   },
   "button": {

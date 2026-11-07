@@ -21,7 +21,7 @@ from .model import (
     ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, amorcer_depuis_historique, classer, echeances,
     garde_fous, pente, planifier,
 )
-from .model import _v
+from .model import _v, note_montee
 
 from .planning import ZONES, changements, consigne_a, prochain_changement, valider
 
@@ -41,6 +41,11 @@ def _float(hass: HomeAssistant, eid: str | None) -> float | None:
         return None
 
 
+def _sans_paren(n: str) -> str:
+    n = n.strip()
+    return f", {n[1:-1]}" if n.startswith("(") and n.endswith(")") else ""
+
+
 def _heure(s: str) -> time:
     h = str(s).split(":")
     return time(int(h[0]), int(h[1]) if len(h) > 1 else 0)
@@ -52,7 +57,9 @@ class Pilote:
         self.entry = entry
         self.store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
         self.appris = Appris()
-        self.drapeaux = {"auto": False, "arret_auto": False, "absent": False, "verrou": False}
+        self.drapeaux = {"auto": False, "arret_auto": False, "absent": False, "verrou": False, "tetes": True}
+        self._tetes_envoye: dict[str, float] = {}     # tête -> dernière consigne envoyée
+        self.tetes_info: dict[str, dict[str, Any]] = {}
         self.journal: list[dict[str, Any]] = []
         self.historique: list[list[Any]] = []
         self.dernier_arret: float | None = None
@@ -89,6 +96,10 @@ class Pilote:
 
     def pieces_cfg(self) -> list[tuple[str, dict[str, Any]]]:
         return [(s.title, dict(s.data)) for s in self.entry.subentries.values()]
+
+    @property
+    def exterieur(self) -> float | None:
+        return _float(self.hass, self.cfg.get(CONF_EXTERIEUR))
 
     @property
     def signal(self) -> str:
@@ -288,7 +299,52 @@ class Pilote:
         self.autorisation = garde_fous(now, self.etat, self._params(), self._allumages_aujourdhui(now),
                                        self.dernier_arret, self.plan, self.ignore_echeance)
         await self._decider(now, ts)
+        await self._piloter_tetes(now, ts)
         async_dispatcher_send(self.hass, self.signal)
+
+    # ---------- têtes thermostatiques ----------
+    def _tetes_zone(self, zone: str) -> list[str]:
+        return [e for e in (self.opt.get(f"tetes_{zone}") or []) if e]
+
+    async def _piloter_tetes(self, now: datetime, ts: float) -> None:
+        """Envoie la consigne de chaque zone à ses têtes, uniquement quand elle change (ou au démarrage)."""
+        if not self.drapeaux.get("tetes", True):
+            return
+        decalage = float(self.opt["tetes_decalage"])
+        for z in ZONES:
+            ents = self._tetes_zone(z)
+            cs = self.consigne_zone(z, now) if ents else None
+            if not ents or cs is None:
+                continue
+            cible = round((cs[0] + decalage) * 2) / 2
+            erreurs: list[str] = []
+            for e in ents:
+                if self._tetes_envoye.get(e) == cible:
+                    continue
+                st = self.hass.states.get(e)
+                if st is None or st.state in ("unavailable", "unknown"):
+                    erreurs.append(f"{e} indisponible")
+                    continue
+                c = cible
+                lo, hi = st.attributes.get("min_temp"), st.attributes.get("max_temp")
+                if isinstance(lo, (int, float)):
+                    c = max(c, float(lo))
+                if isinstance(hi, (int, float)):
+                    c = min(c, float(hi))
+                try:
+                    async with asyncio.timeout(20):
+                        await self.hass.services.async_call("climate", "set_temperature",
+                                                            {"entity_id": e, "temperature": c}, blocking=True)
+                    self._tetes_envoye[e] = cible
+                except Exception as err:  # noqa: BLE001 - une tête en panne ne doit jamais bloquer le pilotage
+                    erreurs.append(f"{e} : {err}")
+            avant = self.tetes_info.get(z, {})
+            if erreurs:
+                if avant.get("erreur") != erreurs[0]:
+                    _LOGGER.warning("Pilotage poêle : têtes de la zone %s non réglées : %s", z, "; ".join(erreurs))
+                self.tetes_info[z] = {"c": cible, "ts": avant.get("ts"), "ok": False, "erreur": erreurs[0]}
+            elif avant.get("c") != cible or not avant.get("ok") or avant.get("ts") is None:
+                self.tetes_info[z] = {"c": cible, "ts": int(ts), "ok": True, "erreur": None}
 
     def _allumages_aujourdhui(self, now: datetime) -> int:
         debut = datetime.combine(now.date(), time(0, 0), tzinfo=now.tzinfo).timestamp()
@@ -325,7 +381,7 @@ class Pilote:
             info = instants[dt]
             ms = self._mesures(dt, lambda c, info=info: (c.get(CONF_ZONE) in info["zones"] and self._zone_active(c.get(CONF_ZONE), dt))
                                or (info["classique"] and self._piece_classique(c, now)))
-            candidats.append(planifier(now, dt, ms, self.appris, marge, deja_en_marche=marche))
+            candidats.append(planifier(now, dt, ms, self.appris, marge, deja_en_marche=marche, exterieur=self.exterieur))
         a_chauffer = [p for p in candidats if p.besoin and p.allumage is not None]
         if a_chauffer:
             return min(a_chauffer, key=lambda p: p.allumage)
@@ -345,7 +401,7 @@ class Pilote:
                   and m.cible - m.temperature > seuils.get(m.nom, float(self.opt["seuil_immediat"]))]
         if not manque:
             return None
-        pl = planifier(now, now, mesures, self.appris, marge, deja_en_marche=False)
+        pl = planifier(now, now, mesures, self.appris, marge, deja_en_marche=False, exterieur=self.exterieur)
         if not pl.besoin or not pl.pieces:
             return None
         d0 = pl.pieces[0]
@@ -354,8 +410,9 @@ class Pilote:
         raison = (f"Consigne en cours : {_v(d0['cible'])} °C pour « {d0['nom']} », qui est à {_v(d0['temperature'])} °C "
                   f"(il manque {_v(d0['besoin'])} °C, écart supérieur à {_v(seuil)} °C). Allumage immédiat conseillé : "
                   f"environ {round(pl.duree_min)} min avant d'être à la consigne "
-                  f"(montée {_v(d0['montee'])} °C/h{'' if d0['montee_apprise'] else ', valeur par défaut'}, "
-                  f"allumage {round(delai)} min{'' if delai_appris else ' par défaut'}).")
+                  f"(montée {_v(d0['montee'])} °C/h{_sans_paren(note_montee(d0))}, "
+                  f"allumage {round(delai)} min{'' if delai_appris else ' par défaut'})."
+                  + ("" if pl.exterieur is None else f" Extérieur : {_v(pl.exterieur)} °C pris en compte."))
         return replace(pl, echeance=now + timedelta(minutes=max(30.0, pl.duree_min)), raison=raison, immediat=True,
                        en_retard=True)
 
@@ -396,9 +453,18 @@ class Pilote:
                     cible = m.cible
                     t0 = run["pieces0"].get(m.nom)
                     if cible is None or t0 is None or t0 < cible - 0.2:
-                        self.appris.maj_montee(m.nom, p)
+                        ext_m, int_m = self._moy_fenetre(m.nom, run["marche"] + 1800, ts)
+                        self.appris.maj_montee(m.nom, p, ext_m, int_m if ext_m is not None else None)
                         resume["pieces"][m.nom] = round(p, 2)
         self.journal = (self.journal + [resume])[-JOURNAL_MAX:]
+
+    def _moy_fenetre(self, nom: str, t0: float, t1: float) -> tuple[float | None, float | None]:
+        """(extérieur moyen, température moyenne de la pièce) sur une fenêtre ; extérieur = valeur actuelle à défaut d'historique."""
+        noms = [n for n, _ in self.pieces_cfg()]
+        exts = [h[3] for h in self.historique if len(h) >= 4 and h[3] is not None and t0 <= h[0] <= t1]
+        ext = sum(exts) / len(exts) if exts else self.exterieur
+        ints = [v for t, v in self.echantillons.get(nom, []) if t0 <= t <= t1]
+        return ext, (sum(ints) / len(ints) if ints else None)
 
     def _apprendre_refroidissement(self, ts: float, mesures: list[PieceMesure]) -> None:
         if self.etat != "arret" or self.dernier_arret is None or self._froid_appris_pour == self.dernier_arret:
@@ -409,7 +475,8 @@ class Pilote:
         for m in mesures:
             p = pente(self.echantillons.get(m.nom, []), self.dernier_arret + 3600, ts)
             if p is not None and p < 0:
-                self.appris.maj_refroid(m.nom, -p)
+                ext_m, int_m = self._moy_fenetre(m.nom, self.dernier_arret + 3600, ts)
+                self.appris.maj_refroid(m.nom, -p, None if ext_m is None or int_m is None else int_m - ext_m)
         self._sauver()
 
     # ---------- sécurités et décisions ----------
@@ -555,6 +622,8 @@ class Pilote:
 
     async def definir_drapeau(self, nom: str, valeur: bool) -> None:
         self.drapeaux[nom] = valeur
+        if nom == "tetes":
+            self._tetes_envoye.clear()            # réactivé : je renvoie les consignes à toutes les têtes
         if nom == "auto" and valeur:
             self.drapeaux["verrou"] = False
         self._sauver()
@@ -610,6 +679,9 @@ class Pilote:
             "arret": self.conditions_arret(now.timestamp(), self._mesures()),
             "zones": self._zones_snapshot(now),
             "pieces_etat": self._pieces_etat(now),
+            "tetes": {"actif": bool(self.drapeaux.get("tetes", True)), "decalage": float(self.opt["tetes_decalage"]),
+                      "zones": {z: {"nb": len(self._tetes_zone(z)), **self.tetes_info.get(z, {})}
+                                for z in ZONES if self._tetes_zone(z)}},
             "garde_fous": {
                 "fenetre": f"{o['fenetre_debut'][:5]}–{o['fenetre_fin'][:5]}", "max_allumages": o["max_allumages"],
                 "allumages_aujourdhui": self._allumages_aujourdhui(now), "marche_min": o["marche_min"],
@@ -619,7 +691,10 @@ class Pilote:
                 "delais": self.appris.delais[-5:], "delai_p80": self.appris.delai_allumage()[0],
                 "delai_appris": self.appris.delai_allumage()[1],
                 "pieces": {n: {"montee": self.appris.montee(n)[0], "appris": self.appris.montee(n)[1],
-                               "n": self.appris.pieces.get(n, {}).get("n_montee", 0)} for n in noms},
+                               "n": self.appris.pieces.get(n, {}).get("n_montee", 0),
+                               "tranches": {t: v["n"] for t, v in (self.appris.pieces.get(n, {}).get("montee_t") or {}).items()},
+                               "k": round(self.appris.k_perte(n)[0], 4), "k_appris": self.appris.k_perte(n)[1]}
+                          for n in noms},
                 "confiance": self.appris.confiance(noms),
             },
             "eau": _float(self.hass, self.cfg.get(CONF_EAU)), "exterieur": _float(self.hass, self.cfg.get(CONF_EXTERIEUR)),

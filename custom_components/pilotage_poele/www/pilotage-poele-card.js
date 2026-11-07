@@ -7,6 +7,7 @@ const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-
 const jjmm = (ts) => new Date(ts * 1000).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const ETATS = ["arret", "allumage", "marche", "extinction", "probleme", "inconnu"];
 const ICONE = { arret: "○", allumage: "◐", marche: "●", extinction: "◑", probleme: "⚠", inconnu: "?" };
+const TRANCHES = { froid: "par temps froid", frais: "par temps frais", doux: "par temps doux" };
 const SOURCES = { auto: "automatique", force: "forcé", manuel: "manuel" };
 
 const STYLE = `
@@ -97,6 +98,21 @@ class PilotagePoeleCard extends HTMLElement {
     const e = Object.keys(h.states).find((k) => k.startsWith("sensor.") && h.states[k].attributes && h.states[k].attributes.garde_fous && h.states[k].attributes.boutons);
     return { entity: e || "" };
   }
+  _noteMontee(y) {
+    const s = y.montee_source;
+    if (s === "tranche") return `(appris ${TRANCHES[y.tranche] || ""})`;
+    if (s === "corrigee") return "(appris, corrigé selon l'extérieur)";
+    if (s === "defaut_ext") return "(défaut ajusté à l'extérieur, pas encore appris)";
+    return y.montee_apprise ? "(appris)" : "(par défaut, pas encore appris)";
+  }
+  _tetes(a, zone) {
+    const t = a.tetes || {}; const z = (t.zones || {})[zone];
+    if (!z) return "Têtes thermostatiques : aucune choisie pour cette zone (⚙ Configurer).";
+    if (!t.actif) return `Têtes thermostatiques : ${z.nb} choisie${z.nb > 1 ? "s" : ""}, pilotage désactivé.`;
+    if (z.erreur) return `⚠ Têtes : ${esc(z.erreur)} (je réessaie chaque minute).`;
+    if (z.c == null) return `Têtes thermostatiques : ${z.nb}, en attente de consigne.`;
+    return `Têtes : ${z.nb} réglée${z.nb > 1 ? "s" : ""} à ${fmt(z.c)} °C${t.decalage ? ` (décalage ${t.decalage > 0 ? "+" : ""}${fmt(t.decalage)} °C)` : ""}${z.ts ? " depuis " + hhmm(z.ts) : ""}.`;
+  }
   _appel(domaine, service, eid) { if (eid) this._hass.callService(domaine, service, { entity_id: eid }); }
 
 
@@ -135,6 +151,7 @@ class PilotagePoeleCard extends HTMLElement {
     n.innerHTML = `<h3>Planning des consignes</h3>
       <div class="zt" role="tablist" aria-label="Zone">${Object.entries(zs).map(([k, v]) => `<button class="zb" role="tab" data-z="${k}" aria-pressed="${k === ed.zone}" aria-selected="${k === ed.zone}">${k === ed.zone ? "● " : "○ "}${esc(v.nom)}</button>`).join("")}</div>
       <div class="petit">${z && z.pieces.length ? "Pièces : " + esc(z.pieces.join(", ")) : "Aucune pièce dans cette zone : choisissez la zone dans les réglages de la pièce."}</div>
+      <div class="petit">${this._tetes(a, ed.zone)}</div>
       <div class="cons"><div><div class="petit">Consigne en cours (${src})</div><div class="val">${z && z.consigne != null ? fmt(z.consigne) + " °C" : "–"}</div></div>
         <div class="pm"><button class="pm1" id="moins" aria-label="Baisser la consigne de 0,5 degré">−</button><button class="pm1" id="plus" aria-label="Monter la consigne de 0,5 degré">+</button></div></div>
       ${z && z.derogation ? `<button class="b" id="retour" style="width:100%;margin-top:6px">↩ Revenir au planning</button>` : ""}
@@ -238,7 +255,7 @@ class PilotagePoeleCard extends HTMLElement {
       const c = concernees.get(x.nom);
       if (c) { const [y, i] = c; const lim = i === 0 && p.besoin;
         return `<div class="piece ${lim ? "lim" : ""}"><div class="l1"><span>${esc(y.nom)}${lim ? " · la plus lente" : ""}</span><span>${fmt(y.temperature)} → ${fmt(y.cible)} °C</span></div>
-       <div class="l2">${y.besoin > 0.05 ? `manque ${fmt(y.besoin)} °C` : "à la cible"} · monte de ${fmt(y.montee)} °C/h ${y.montee_apprise ? "(appris)" : "(par défaut, pas encore appris)"} · ≈ ${y.duree_min} min de chauffe</div></div>`; }
+       <div class="l2">${y.besoin > 0.05 ? `manque ${fmt(y.besoin)} °C` : "à la cible"} · monte de ${fmt(y.montee)} °C/h ${this._noteMontee(y)} · ≈ ${y.duree_min} min de chauffe</div></div>`; }
       const ecart = x.consigne != null && x.temperature != null ? x.consigne - x.temperature : null;
       const etat = x.consigne == null ? "pas de consigne" : ecart != null && ecart > 0.05 ? `manque ${fmt(ecart)} °C` : "à la consigne";
       const quoi = p && p.besoin && p.echeance ? `pas concernée par l'objectif de ${hhmm(p.echeance)}` : "pas concernée par l'objectif en cours";
@@ -249,7 +266,7 @@ class PilotagePoeleCard extends HTMLElement {
     const piecesHtml = ordre.map(ligne).join("") || `<div class="vide">Aucune pièce configurée.</div>`;
     const piecesOuvert = this._ouv && this._ouv.pieces === false ? "" : "open";
     const piecesTitre = p && p.besoin && concernees.size > 1 ? "Les pièces (la plus lente décide)" : "Les pièces";
-    const piecesAppris = Object.entries(ap.pieces || {}).map(([n, v]) => `<li>${esc(n)} : ${v.appris ? `montée apprise sur ${v.n} chauffe${v.n > 1 ? "s" : ""} (${fmt(v.montee)} °C/h)` : "pas encore apprise (valeur par défaut)"}</li>`).join("");
+    const piecesAppris = Object.entries(ap.pieces || {}).map(([n, v]) => `<li>${esc(n)} : ${v.appris ? `montée apprise sur ${v.n} chauffe${v.n > 1 ? "s" : ""} (${fmt(v.montee)} °C/h)${Object.keys(v.tranches || {}).length ? " · " + Object.entries(v.tranches).map(([t, n]) => `${t} ${n}`).join(", ") : ""}` : "pas encore apprise (valeur par défaut)"}${v.k_appris ? ` · perte ${fmt(v.k * 10)} °C/h pour 10 °C d'écart` : ""}</li>`).join("");
     const journal = (a.journal || []).map((j) => `<li>${jjmm(j.debut)} · ${esc(SOURCES[j.source] || j.source)} · ${j.duree_min} min${j.allumage_min != null ? ` (allumage ${j.allumage_min} min)` : ""}${Object.keys(j.pieces || {}).length ? " · montée " + Object.entries(j.pieces).map(([n, v]) => `${esc(n)} ${fmt(v)} °C/h`).join(", ") : ""}</li>`).join("") || `<li class="vide">Aucun cycle enregistré pour l'instant.</li>`;
     const da = a.derniere_action;
     const inter = (cle, lib) => `<button class="t" id="${cle}" aria-pressed="${!!d[cle]}" ${b[cle] ? "" : "disabled"}><span>${lib}</span><span>${d[cle] ? "● Activé" : "○ Désactivé"}</span></button>`;
@@ -264,7 +281,7 @@ class PilotagePoeleCard extends HTMLElement {
           <div class="sous">${esc(au.ok ? "✓ " : "") + esc(au.raison || "")}</div></div>
         <div class="actions"><button class="b" id="allumer" ${b.allumer ? "" : "disabled"}>▶ Allumer maintenant</button>
           <button class="b" id="annuler" ${b.annuler ? "" : "disabled"}>${actif ? "■ Annuler / éteindre" : "✕ Annuler l'allumage prévu"}</button></div>
-        <div class="inter">${inter("auto", "Allumage automatique")}${inter("arret_auto", "Arrêt automatique")}${inter("absent", "Mode absent")}</div>
+        <div class="inter">${inter("auto", "Allumage automatique")}${inter("arret_auto", "Arrêt automatique")}${inter("absent", "Mode absent")}${Object.keys((a.tetes || {}).zones || {}).length ? inter("tetes", "Piloter les têtes") : ""}</div>
         ${this._arret(a)}
         <details ${ouvert}><summary>Garde-fous actifs</summary><ul>
           <li>Allumage automatique autorisé entre ${esc(gf.fenetre)}</li><li>Allumages automatiques aujourd'hui : ${gf.allumages_aujourdhui} / ${gf.max_allumages}</li>
@@ -274,7 +291,7 @@ class PilotagePoeleCard extends HTMLElement {
       <div class="c2">
         <div class="sec" id="planph"></div>
         <div class="sec"><h3>Le poêle sur 24 heures</h3>${this._frise(a)}</div>
-        <details id="dpieces" class="sec" ${piecesOuvert}><summary>${piecesTitre} (${ordre.length})</summary>${piecesHtml}</details>
+        <details id="dpieces" class="sec" ${piecesOuvert}><summary>${piecesTitre} (${ordre.length})</summary>${piecesHtml}<p class="petit">${a.exterieur != null ? `Extérieur : ${fmt(a.exterieur)} °C. La montée et le refroidissement de chaque pièce en tiennent compte.` : "Pas de capteur extérieur : montée et refroidissement sans correction (ajoutez-le dans « Reconfigurer »)."}</p></details>
         <details ${ouvert}><summary>Ce que j'ai appris (${Math.round((ap.confiance || 0) * 100)} % de confiance)</summary>
           <ul><li>Délai d'allumage : ${ap.delai_appris ? `appris sur ${(ap.delais || []).length} essai(s), prudent ≈ ${Math.round(ap.delai_p80)} min` : "valeur par défaut 20 min, pas encore appris"}</li>${piecesAppris}</ul>
           <p class="petit">La confiance monte avec les allumages observés. Tant qu'une valeur est « par défaut », le calcul est volontairement prudent.</p></details>
@@ -291,7 +308,7 @@ class PilotagePoeleCard extends HTMLElement {
     r.getElementById("dpieces")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { pieces: e.target.open }); });
     r.getElementById("allumer")?.addEventListener("click", () => this._appel("button", "press", b.allumer));
     r.getElementById("annuler")?.addEventListener("click", () => this._appel("button", "press", b.annuler));
-    for (const cle of ["auto", "arret_auto", "absent"]) r.getElementById(cle)?.addEventListener("click", () => this._appel("switch", d[cle] ? "turn_off" : "turn_on", b[cle]));
+    for (const cle of ["auto", "arret_auto", "absent", "tetes"]) r.getElementById(cle)?.addEventListener("click", () => this._appel("switch", d[cle] ? "turn_off" : "turn_on", b[cle]));
   }
 }
 

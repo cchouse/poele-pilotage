@@ -1,7 +1,7 @@
 """Constantes de l'intégration Pilotage poêle."""
 DOMAIN = "pilotage_poele"
 SUBENTRY_PIECE = "piece"
-VERSION = "0.5.4"
+VERSION = "0.6.0"
 URL_CARTE = "/pilotage_poele/pilotage-poele-card.js"
 
 # configuration principale
@@ -33,6 +33,9 @@ OPTIONS_DEFAUT = {
     "hysteresis": 0.3,       # °C au-dessus de la cible pour l'arrêt automatique
     "immediat_actif": True,  # allumage conseillé tout de suite si la pièce est sous la consigne en cours
     "seuil_immediat": 0.5,   # °C d'écart sous la consigne en cours avant de déclencher
+    "tetes_chambre": [],     # têtes thermostatiques (entités climate) réglées sur la consigne de la zone Chambre
+    "tetes_maison": [],      # idem pour la zone Maison
+    "tetes_decalage": 0.0,   # °C ajoutés à la consigne envoyée aux têtes (ex. +1 pour une tête mal placée)
 }
 
 TICK_S = 60

@@ -47,7 +47,10 @@
      "marge": "Marge de prudence (1,25 = +25 %)",
      "hysteresis": "Marge au-dessus de la température visée pour l'arrêt (°C)",
      "immediat_actif": "Allumage conseillé dès que la pièce est sous la consigne en cours",
-     "seuil_immediat": "Écart sous la consigne qui déclenche (°C)"
+     "seuil_immediat": "Écart sous la consigne qui déclenche (°C)",
+     "tetes_chambre": "Têtes thermostatiques de la zone Chambre",
+     "tetes_maison": "Têtes thermostatiques de la zone Maison",
+     "tetes_decalage": "Décalage ajouté à la consigne des têtes (°C)"
     }
    }
   }
@@ -128,6 +131,9 @@
    },
    "absent": {
     "name": "Mode absent"
+   },
+   "tetes": {
+    "name": "Piloter les têtes"
    }
   },
   "button": {

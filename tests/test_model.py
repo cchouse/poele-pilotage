@@ -152,3 +152,68 @@ def test_planning_pur():
     assert [c for _, c in changements(p, lun_5h, 24)] == [20.5, 18.0]
     assert prochain_changement(p, lun_5h)[0].hour == 6
     assert consigne_a({}, lun_5h) is None and changements(None, lun_5h) == []
+
+
+# ---------- température extérieure ----------
+from custom_components.pilotage_poele.model import K_DEFAUT, tranche, amorcer_depuis_historique, ETATS
+
+
+def test_tranches():
+    assert tranche(None) is None and tranche(2) == "froid" and tranche(8) == "frais" and tranche(15) == "doux"
+
+
+def test_refroidissement_proportionnel_a_l_ecart():
+    a = Appris()
+    chaud, _ = a.refroid("c", 6.0)
+    froid, _ = a.refroid("c", 18.0)
+    assert froid > chaud and abs(froid / chaud - 3) < 0.01
+    assert a.refroid("c") == (0.15, False)                       # sans extérieur : comportement d'origine
+
+
+def test_k_appris_remplace_la_valeur_par_defaut():
+    a = Appris()
+    a.maj_refroid("c", 0.3, 15.0)                                # 0,3 °C/h pour 15 °C d'écart : k = 0,02
+    v, appris = a.refroid("c", 10.0)
+    assert appris and abs(v - 0.2) < 1e-6
+    assert a.k_perte("c") == (0.02, True)
+
+
+def test_montee_par_defaut_ajustee_a_l_exterieur():
+    a = Appris()
+    d = a.montee_detail("c", 2.0, 20.0)                          # 18 °C d'écart > 12 °C de référence
+    assert d["source"] == "defaut_ext" and not d["appris"] and d["v"] < 0.5
+    d2 = a.montee_detail("c", 14.0, 20.0)
+    assert d2["v"] > 0.5
+    assert a.montee_detail("c")["source"] == "defaut" and a.montee_detail("c")["v"] == 0.5
+
+
+def test_montee_apprise_par_tranche_et_corrigee_ailleurs():
+    a = Appris()
+    a.maj_montee("c", 0.4, 2.0, 20.0)                            # appris par temps froid
+    assert a.montee_detail("c", 3.0, 20.0)["source"] == "tranche"
+    d = a.montee_detail("c", 14.0, 20.0)                         # tranche « doux » jamais vue : correction
+    assert d["source"] == "corrigee" and d["v"] > 0.4 and d["appris"]
+    a.maj_montee("c", 0.7, 14.0, 20.0)
+    assert a.montee_detail("c", 13.0, 20.0)["source"] == "tranche"
+    assert abs(a.montee_detail("c", 13.0, 20.0)["v"] - 0.7) < 1e-6
+
+
+def test_planifier_plus_tot_quand_il_fait_froid():
+    pieces = [PieceMesure("c", 18.0, 20.5)]
+    doux = planifier(now(), now(18), pieces, Appris(), exterieur=14.0)
+    froid = planifier(now(), now(18), pieces, Appris(), exterieur=0.0)
+    sans = planifier(now(), now(18), pieces, Appris())
+    assert froid.allumage < sans.allumage < doux.allumage
+    assert froid.exterieur == 0.0 and "Extérieur : 0,0 °C" in froid.raison
+    assert "Extérieur" not in sans.raison and sans.exterieur is None
+
+
+def test_amorcer_apprend_avec_l_exterieur():
+    i_arret = ETATS.index("arret")
+    # 8 h d'arrêt : la pièce passe de 21 à 18,6 °C (0,3 °C/h) avec 3 °C dehors (écart ≈ 16 °C)
+    h = [[int(1000 + k * 600), i_arret, None, 3.0, [21.0 - 0.3 * (k * 600 / 3600)]] for k in range(48)]
+    a = Appris()
+    amorcer_depuis_historique(h, ["c"], {"c": 20.5}, a)
+    assert a.pieces["c"].get("n_k", 0) == 1
+    k, ok = a.k_perte("c")
+    assert ok and 0.015 < k < 0.025

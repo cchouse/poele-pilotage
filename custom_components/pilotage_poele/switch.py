@@ -7,11 +7,11 @@ from .entity import PoeleEntity
 
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
     p = entry.runtime_data
-    async_add_entities([Drapeau(p, "auto"), Drapeau(p, "arret_auto"), Drapeau(p, "absent")])
+    async_add_entities([Drapeau(p, "auto"), Drapeau(p, "arret_auto"), Drapeau(p, "absent"), Drapeau(p, "tetes")])
 
 
 class Drapeau(PoeleEntity, SwitchEntity):
-    """Interrupteurs : allumage automatique, arrêt automatique, mode absent. Tous désactivés par défaut."""
+    """Interrupteurs : allumage automatique, arrêt automatique, mode absent. Tous désactivés par défaut, sauf « têtes » (actif dès que des têtes sont choisies dans « Configurer »)."""
 
     def __init__(self, p, cle: str) -> None:
         super().__init__(p, cle)
