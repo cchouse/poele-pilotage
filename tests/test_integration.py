@@ -564,3 +564,99 @@ async def test_synthese_sans_capteur_exterieur(hass, freezer):
     entry, _ = await installer(hass, freezer)
     s = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["synthese"]
     assert s["ext"] is None and "dju" not in s and "perte" not in s and "eco_pct" not in s
+
+
+# ---------- loi d'eau ----------
+async def _ext(hass, entry, valeur):
+    hass.states.async_set("sensor.ext", str(valeur))
+    if "exterieur" not in entry.data:
+        hass.config_entries.async_update_entry(entry, data={**entry.data, "exterieur": "sensor.ext"})
+        await hass.async_block_till_done()
+    return hass.config_entries.async_entries(DOMAIN)[0]
+
+
+def _poele_eau(hass, consigne=62, statut="Heating", mn=50, mx=80):
+    hass.states.async_set(POELE, "heat", {"hvac_action": "heating", "temperature": consigne, "min_temp": mn, "max_temp": mx})
+    hass.states.async_set(STATUT, statut)
+
+
+async def test_eau_conseillee_suit_la_courbe_et_les_bornes(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
+    _poele_eau(hass, statut="Off")
+    entry = await _ext(hass, entry, 0.0)
+    await avancer(hass, freezer, entry, 1)
+    assert entry.runtime_data.eau_info["c"] == 70
+    await _ext(hass, entry, 7.5)
+    await avancer(hass, freezer, entry, 1)
+    assert entry.runtime_data.eau_info["c"] == 65
+    await _ext(hass, entry, 20.0)
+    await avancer(hass, freezer, entry, 1)
+    assert entry.runtime_data.eau_info["c"] == 60                # au-delà de 15 °C : la valeur de 15 °C
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "eau_t15": 50.0})
+    await hass.async_block_till_done()
+    await avancer(hass, freezer, entry, 1)
+    assert entry.runtime_data.eau_info["c"] == 58                # jamais sous le minimum (la pompe démarre à 55 °C)
+    assert "limites" in entry.runtime_data.eau_info["raison"]
+
+
+async def test_eau_coup_de_pouce_si_besoin_pressant(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.0", zone="chambre")
+    await _planning(hass)
+    _poele_eau(hass, statut="Off")
+    entry = await _ext(hass, entry, 15.0)
+    await avancer(hass, freezer, entry, 1)
+    e = entry.runtime_data.eau_info
+    assert e["ajust"] == 2.0 and e["c"] == 62 and "il manque" in e["raison"]
+
+
+async def test_eau_sans_capteur_exterieur_pas_de_conseil(hass, freezer):
+    entry, _ = await installer(hass, freezer)
+    assert entry.runtime_data.eau_info is None
+    assert hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["eau_poele"]["conseil"] is None
+
+
+async def test_eau_envoi_par_pas_avec_verification(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
+    entry = await _ext(hass, entry, 0.0)                         # courbe : 70 °C
+    _poele_eau(hass, 62)
+    envois = async_mock_service(hass, "climate", "set_temperature")
+    await bascule(hass, entry, "eau")
+    await avancer(hass, freezer, entry, 1)
+    assert [a.data["temperature"] for a in envois] == [67]       # 62 → 70 limité à 5 °C par changement
+    _poele_eau(hass, 67)
+    await avancer(hass, freezer, entry, 2)                       # relecture : confirmé
+    assert entry.runtime_data.eau_envoi["verifie"] and entry.runtime_data.eau_envoi["erreur"] is None
+    await avancer(hass, freezer, entry, 10)
+    assert len(envois) == 1                                      # 30 min minimum entre deux changements
+    await avancer(hass, freezer, entry, 25)
+    assert [a.data["temperature"] for a in envois] == [67, 70]
+
+
+async def test_eau_rien_en_mode_conseil_ou_hors_marche(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
+    entry = await _ext(hass, entry, 0.0)
+    envois = async_mock_service(hass, "climate", "set_temperature")
+    _poele_eau(hass, 62)
+    await avancer(hass, freezer, entry, 1)
+    assert envois == []                                          # interrupteur désactivé : conseil seulement
+    hass.states.async_set(STATUT, "Off")
+    hass.states.async_set(POELE, "off", {"hvac_action": "off", "temperature": 62})
+    await bascule(hass, entry, "eau")
+    await avancer(hass, freezer, entry, 1)
+    assert envois == []                                          # poêle à l'arrêt : on n'y touche pas
+    assert hass.states.get(eid(hass, entry, "switch", "eau")).state == "on"
+
+
+async def test_eau_desactivee_apres_trois_refus(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
+    entry = await _ext(hass, entry, 0.0)
+    _poele_eau(hass, 62)
+    envois = async_mock_service(hass, "climate", "set_temperature")
+    await bascule(hass, entry, "eau")
+    for _ in range(3):
+        await avancer(hass, freezer, entry, 1)                   # envoi
+        await avancer(hass, freezer, entry, 2)                   # relecture : la consigne n'a pas bougé
+        await avancer(hass, freezer, entry, 30)
+    assert len(envois) == 3
+    assert hass.states.get(eid(hass, entry, "switch", "eau")).state == "off"
+    assert any("désactivé" in a.data["message"] for a in appels["notif"])

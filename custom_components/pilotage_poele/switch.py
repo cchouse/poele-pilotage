@@ -7,7 +7,7 @@ from .entity import PoeleEntity
 
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
     p = entry.runtime_data
-    async_add_entities([Drapeau(p, "auto"), Drapeau(p, "arret_auto"), Drapeau(p, "absent"), Drapeau(p, "tetes")])
+    async_add_entities([Drapeau(p, "auto"), Drapeau(p, "arret_auto"), Drapeau(p, "absent"), Drapeau(p, "tetes"), Drapeau(p, "eau")])
 
 
 class Drapeau(PoeleEntity, SwitchEntity):

@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.6.1";
+const VERSION = "0.7.0";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -123,8 +123,19 @@ class PilotagePoeleCard extends HTMLElement {
     out.push(t("Poêle sur 24 h", s.marche_min ? heures(s.marche_min) : "0 h 00", `${s.allumages || 0} allumage${(s.allumages || 0) > 1 ? "s" : ""} observé${(s.allumages || 0) > 1 ? "s" : ""}`));
     if (s.dju != null) out.push(t("Besoin de chauffage", `${fmt(s.dju)} DJU`, "degrés-jours base 18 : plus c'est haut, plus il faut chauffer"));
     if (s.perte != null) out.push(t("Perte de la maison", `−${fmt(s.perte, 2)} °C/h`, `sans chauffage, à l'écart actuel (${s.perte_apprise ? "apprise" : "estimée"})`));
+    if (a.eau_poele && a.eau_poele.conseil) out.push(t("Eau conseillée", `${fmt(a.eau_poele.conseil.c, 0)} °C`, `actuelle ${a.eau_poele.actuelle == null ? "–" : fmt(a.eau_poele.actuelle, 0) + " °C"} · selon l'extérieur`));
     if (s.eco_pct != null) out.push(t("Économie possible", `≈ ${fmt(s.eco_pct, 0)} %`, "d'énergie en moins pour 1 °C de consigne en moins"));
     return `<details id="dsynth" class="synth" ${this._ouv && this._ouv.synthese === false ? "" : "open"}><summary>Synthèse</summary><div class="tuiles">${out.join("")}</div></details>`;
+  }
+  _eau(a) {
+    const e = a.eau_poele || {}; const c = e.conseil;
+    if (!c) return `<div class="sec"><h3>Eau du poêle</h3><p class="petit">Pas de capteur extérieur : je ne peux pas calculer l'eau conseillée (ajoutez-le dans « Reconfigurer »).</p></div>`;
+    const d = e.dernier;
+    const etat = e.actif ? `Réglage automatique actif : par pas de 5 °C au plus, pendant la marche, 6 changements par jour au plus (${e.changements_24h} sur 24 h), entre ${fmt(c.min, 0)} et ${fmt(c.max, 0)} °C.` : "Mode conseil : rien n'est envoyé au poêle.";
+    const der = d ? `<p class="petit">Dernier réglage : ${hhmm(d.ts)} → ${fmt(d.c, 0)} °C${d.erreur ? ` — ⚠ ${esc(d.erreur)}` : d.verifie ? " (confirmé par le poêle)" : " (vérification en cours)"}.</p>` : "";
+    return `<div class="sec"><h3>Eau du poêle : ${fmt(c.c, 0)} °C conseillée</h3>
+      <p class="petit">Actuellement ${e.actuelle == null ? "–" : fmt(e.actuelle, 0) + " °C"}. ${esc(c.raison)}</p>
+      <p class="petit">${etat}</p>${der}</div>`;
   }
   _tetes(a, zone) {
     const t = a.tetes || {}; const z = (t.zones || {})[zone];
@@ -303,7 +314,8 @@ class PilotagePoeleCard extends HTMLElement {
           <div class="sous">${esc(au.ok ? "✓ " : "") + esc(au.raison || "")}</div></div>
         <div class="actions"><button class="b" id="allumer" ${b.allumer ? "" : "disabled"}>▶ Allumer maintenant</button>
           <button class="b" id="annuler" ${b.annuler ? "" : "disabled"}>${actif ? "■ Annuler / éteindre" : "✕ Annuler l'allumage prévu"}</button></div>
-        <div class="inter">${inter("auto", "Allumage automatique")}${inter("arret_auto", "Arrêt automatique")}${inter("absent", "Mode absent")}${Object.keys((a.tetes || {}).zones || {}).length ? inter("tetes", "Piloter les têtes") : ""}</div>
+        <div class="inter">${inter("auto", "Allumage automatique")}${inter("arret_auto", "Arrêt automatique")}${inter("absent", "Mode absent")}${Object.keys((a.tetes || {}).zones || {}).length ? inter("tetes", "Piloter les têtes") : ""}${a.eau_poele && a.eau_poele.conseil ? inter("eau", "Régler l'eau du poêle") : ""}</div>
+        ${this._eau(a)}
         ${this._arret(a)}
         <details ${ouvert}><summary>Garde-fous actifs</summary><ul>
           <li>Allumage automatique autorisé entre ${esc(gf.fenetre)}</li><li>Allumages automatiques aujourd'hui : ${gf.allumages_aujourdhui} / ${gf.max_allumages}</li>
@@ -331,7 +343,7 @@ class PilotagePoeleCard extends HTMLElement {
     r.getElementById("dsynth")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { synthese: e.target.open }); });
     r.getElementById("allumer")?.addEventListener("click", () => this._appel("button", "press", b.allumer));
     r.getElementById("annuler")?.addEventListener("click", () => this._appel("button", "press", b.annuler));
-    for (const cle of ["auto", "arret_auto", "absent", "tetes"]) r.getElementById(cle)?.addEventListener("click", () => this._appel("switch", d[cle] ? "turn_off" : "turn_on", b[cle]));
+    for (const cle of ["auto", "arret_auto", "absent", "tetes", "eau"]) r.getElementById(cle)?.addEventListener("click", () => this._appel("switch", d[cle] ? "turn_off" : "turn_on", b[cle]));
   }
 }
 

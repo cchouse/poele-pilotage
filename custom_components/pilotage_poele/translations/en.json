@@ -50,7 +50,11 @@
      "seuil_immediat": "Gap below setpoint that triggers (°C)",
      "tetes_chambre": "Radiator valves of the Bedroom zone",
      "tetes_maison": "Radiator valves of the House zone",
-     "tetes_decalage": "Offset added to the valve setpoint (°C)"
+     "tetes_decalage": "Offset added to the valve setpoint (°C)",
+     "eau_t0": "Water curve: water wanted at 0 °C outside (°C)",
+     "eau_t15": "Water curve: water wanted at 15 °C outside (°C)",
+     "eau_min": "Water: never below (°C) — the pump starts at 55 °C",
+     "eau_max": "Water: never above (°C)"
     }
    }
   }
@@ -134,6 +138,9 @@
    },
    "tetes": {
     "name": "Control the valves"
+   },
+   "eau": {
+    "name": "Set the stove water temperature"
    }
   },
   "button": {

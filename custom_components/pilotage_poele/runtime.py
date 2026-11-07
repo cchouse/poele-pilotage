@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_CIBLE, CONF_ECART, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, CONF_ZONE,
-    DOMAIN, ECHANTILLON_S, GRACE_FIN_CYCLE_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
+    DOMAIN, EAU_ECART_MIN, EAU_INTERVALLE_S, EAU_MAX_PAR_JOUR, EAU_PAS_MAX, ECHANTILLON_S, GRACE_FIN_CYCLE_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
 )
 from .model import (
     ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, amorcer_depuis_historique, classer, echeances,
@@ -57,9 +57,13 @@ class Pilote:
         self.entry = entry
         self.store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
         self.appris = Appris()
-        self.drapeaux = {"auto": False, "arret_auto": False, "absent": False, "verrou": False, "tetes": True}
+        self.drapeaux = {"auto": False, "arret_auto": False, "absent": False, "verrou": False, "tetes": True, "eau": False}
         self._tetes_envoye: dict[str, float] = {}     # tête -> dernière consigne envoyée
         self.tetes_info: dict[str, dict[str, Any]] = {}
+        self.eau_changes: list[float] = []          # horodatages des changements de consigne d'eau
+        self.eau_info: dict[str, Any] | None = None  # eau conseillée (courbe + ajustement)
+        self.eau_envoi: dict[str, Any] | None = None  # dernier envoi : c, ts, verifie, erreur
+        self._eau_echecs = 0
         self.journal: list[dict[str, Any]] = []
         self.historique: list[list[Any]] = []
         self.dernier_arret: float | None = None
@@ -115,6 +119,7 @@ class Pilote:
         self.dernier_arret = d.get("dernier_arret")
         self.allumages = [t for t in d.get("allumages", []) if t > dt_util.utcnow().timestamp() - 172800]
         self.ignore_echeance = d.get("ignore_echeance")
+        self.eau_changes = [t for t in d.get("eau_changes", []) if t > dt_util.utcnow().timestamp() - 86400]
         self.cmd = d.get("cmd")
         self.run = d.get("run")
         self._cmd_off_ts = d.get("cmd_off")
@@ -164,7 +169,7 @@ class Pilote:
             "historique": self.historique[-HISTO_MAX:], "dernier_arret": self.dernier_arret,
             "allumages": self.allumages, "ignore_echeance": self.ignore_echeance, "cmd": self.cmd, "run": self.run,
             "cmd_off": self._cmd_off_ts, "amorce": self.amorce, "planning": self.planning,
-            "derogations": self.derogations, "ignore_immediat": self.ignore_immediat,
+            "derogations": self.derogations, "ignore_immediat": self.ignore_immediat, "eau_changes": self.eau_changes,
         }
 
     def _sauver(self) -> None:
@@ -300,7 +305,93 @@ class Pilote:
                                        self.dernier_arret, self.plan, self.ignore_echeance)
         await self._decider(now, ts)
         await self._piloter_tetes(now, ts)
+        self.eau_info = self._eau_conseillee(now)
+        await self._regler_eau(now, ts)
         async_dispatcher_send(self.hass, self.signal)
+
+    # ---------- loi d'eau ----------
+    def _bornes_eau(self) -> tuple[float, float]:
+        o = self.opt
+        lo, hi = float(o["eau_min"]), float(o["eau_max"])
+        st = self.hass.states.get(self.cfg[CONF_POELE])
+        if st is not None:
+            a, b = st.attributes.get("min_temp"), st.attributes.get("max_temp")
+            if isinstance(a, (int, float)):
+                lo = max(lo, float(a))
+            if isinstance(b, (int, float)):
+                hi = min(hi, float(b))
+        return lo, max(lo, hi)
+
+    def _eau_conseillee(self, now: datetime) -> dict[str, Any] | None:
+        """Consigne d'eau conseillée : courbe selon l'extérieur, plus un coup de pouce si le besoin est pressant."""
+        ext = self.exterieur
+        if ext is None:
+            return None
+        o = self.opt
+        t0, t15 = float(o["eau_t0"]), float(o["eau_t15"])
+        base = t0 + (t15 - t0) * min(15.0, max(0.0, ext)) / 15.0
+        pl = self.plan
+        besoin = 0.0
+        if pl and pl.besoin and pl.pieces and (pl.immediat or pl.en_retard
+                                                or (pl.allumage and (pl.allumage - now) <= timedelta(hours=2))):
+            besoin = max(p["besoin"] for p in pl.pieces)
+        aj = 4.0 if besoin >= 2 else (2.0 if besoin >= 1 else 0.0)
+        lo, hi = self._bornes_eau()
+        c = round(min(hi, max(lo, base + aj)))
+        raison = f"{_v(ext)} °C dehors : la courbe donne {_v(base, 0)} °C"
+        if aj:
+            raison += f", plus {_v(aj, 0)} °C car il manque {_v(besoin)} °C dans la pièce la plus lente"
+        if c != round(base + aj):
+            raison += f" ; ramené à {c} °C par les limites ({round(lo)}–{round(hi)} °C)"
+        return {"c": c, "base": round(base, 1), "ajust": aj, "raison": raison + ".", "min": lo, "max": hi}
+
+    async def _regler_eau(self, now: datetime, ts: float) -> None:
+        """Envoie la consigne d'eau au poêle, par petits pas et seulement pendant la marche. Désactivé par défaut."""
+        poele = self.cfg[CONF_POELE]
+        e = self.eau_envoi
+        if e and not e.get("verifie") and ts - e["ts"] >= 90:        # le poêle a-t-il bien pris la consigne ?
+            st = self.hass.states.get(poele)
+            cur = None if st is None else st.attributes.get("temperature")
+            if isinstance(cur, (int, float)) and abs(float(cur) - e["c"]) <= 0.6:
+                e["verifie"], e["erreur"], self._eau_echecs = True, None, 0
+            else:
+                e["verifie"], e["erreur"] = True, "le poêle n'a pas pris la consigne"
+                self._eau_echecs += 1
+                if self._eau_echecs >= 3:
+                    self.drapeaux["eau"] = False
+                    self._sauver()
+                    await self._notifier("Poêle : le réglage automatique de l'eau est désactivé, le poêle n'a pas pris "
+                                         "la consigne 3 fois de suite. Vérifiez son entité.")
+        if not self.drapeaux.get("eau") or self.eau_info is None or self.etat != "marche":
+            return
+        st = self.hass.states.get(poele)
+        cur = None if st is None else st.attributes.get("temperature")
+        if not isinstance(cur, (int, float)):
+            return
+        cur = float(cur)
+        lo, hi = self._bornes_eau()
+        cible = float(self.eau_info["c"])
+        if abs(cible - cur) < EAU_ECART_MIN and lo <= cur <= hi:
+            return
+        if e and ts - e["ts"] < EAU_INTERVALLE_S:
+            return
+        self.eau_changes = [t for t in self.eau_changes if t > ts - 86400]
+        if len(self.eau_changes) >= EAU_MAX_PAR_JOUR:
+            return
+        nouveau = round(min(hi, max(lo, cur + max(-EAU_PAS_MAX, min(EAU_PAS_MAX, cible - cur)))))
+        if nouveau == round(cur):
+            return
+        try:
+            async with asyncio.timeout(20):
+                await self.hass.services.async_call("climate", "set_temperature",
+                                                    {"entity_id": poele, "temperature": nouveau}, blocking=True)
+            self.eau_envoi = {"c": nouveau, "ts": ts, "verifie": False, "erreur": None, "avant": cur}
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Pilotage poêle : consigne d'eau refusée : %s", err)
+            self.eau_envoi = {"c": nouveau, "ts": ts, "verifie": True, "erreur": str(err), "avant": cur}
+            self._eau_echecs += 1
+        self.eau_changes.append(ts)
+        self._sauver()
 
     # ---------- têtes thermostatiques ----------
     def _tetes_zone(self, zone: str) -> list[str]:
@@ -659,6 +750,15 @@ class Pilote:
             })
         return out
 
+    def _eau_snapshot(self) -> dict[str, Any]:
+        st = self.hass.states.get(self.cfg[CONF_POELE])
+        cur = None if st is None else st.attributes.get("temperature")
+        e = self.eau_envoi or {}
+        return {"actif": bool(self.drapeaux.get("eau")), "conseil": self.eau_info,
+                "actuelle": float(cur) if isinstance(cur, (int, float)) else None,
+                "dernier": None if not e else {"c": e["c"], "ts": int(e["ts"]), "verifie": e.get("verifie"), "erreur": e.get("erreur")},
+                "changements_24h": len([t for t in self.eau_changes if t > dt_util.utcnow().timestamp() - 86400])}
+
     def _synthese(self, now: datetime, mesures: list[PieceMesure]) -> dict[str, Any]:
         """Indicateurs de synthèse (extérieur, intérieur, poêle sur 24 h, degrés-jours, pertes, économie)."""
         ts = now.timestamp()
@@ -719,6 +819,7 @@ class Pilote:
             "zones": self._zones_snapshot(now),
             "pieces_etat": self._pieces_etat(now),
             "synthese": self._synthese(now, self._mesures()),
+            "eau_poele": self._eau_snapshot(),
             "tetes": {"actif": bool(self.drapeaux.get("tetes", True)), "decalage": float(self.opt["tetes_decalage"]),
                       "zones": {z: {"nb": len(self._tetes_zone(z)), **self.tetes_info.get(z, {})}
                                 for z in ZONES if self._tetes_zone(z)}},

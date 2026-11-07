@@ -96,6 +96,10 @@ def _schema_options(d: dict[str, Any]) -> vol.Schema:
         vol.Optional("tetes_maison", description={"suggested_value": d.get("tetes_maison") or []}): selector.EntitySelector(
             selector.EntitySelectorConfig(domain="climate", multiple=True)),
         vol.Required("tetes_decalage", default=d["tetes_decalage"]): num(-3, 3, 0.5, "°C"),
+        vol.Required("eau_t0", default=d["eau_t0"]): num(30, 90, 1, "°C"),
+        vol.Required("eau_t15", default=d["eau_t15"]): num(30, 90, 1, "°C"),
+        vol.Required("eau_min", default=d["eau_min"]): num(30, 90, 1, "°C"),
+        vol.Required("eau_max", default=d["eau_max"]): num(30, 95, 1, "°C"),
     })
 
 

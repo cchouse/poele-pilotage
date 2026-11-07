@@ -1,4 +1,4 @@
-# Pilotage poêle (Home Assistant) — version 0.6.1
+# Pilotage poêle (Home Assistant) — version 0.7.0
 
 Calcule **quand allumer** le poêle à granulés pour que les pièces soient à la bonne température à l'heure voulue, apprend les inerties de la maison, et explique chaque décision. Par défaut : **mode conseil**, rien n'est envoyé au poêle.
 
@@ -36,6 +36,16 @@ Une zone repliable de six tuiles, calculées avec les données déjà enregistr�
 - **Perte de la maison** : °C/h perdus sans chauffage à l'écart actuel avec l'extérieur (appris sur vos arrêts, estimé tant que rien n'est appris).
 - **Économie possible** : les pertes étant proportionnelles à l'écart intérieur − extérieur, baisser la consigne d'1 °C économise environ 1 ÷ écart de l'énergie (≈ 6 % pour 17 °C d'écart). C'est un ordre de grandeur, pas une mesure.
 
+## Loi d'eau (0.7)
+Avec un capteur extérieur, l'intégration calcule la **consigne d'eau conseillée** : une courbe entre deux points que vous réglez dans « Configurer » (eau voulue à 0 °C dehors, eau voulue à 15 °C dehors et au-delà), plus 2 ou 4 °C quand le besoin est pressant (une pièce manque 1 °C ou plus alors qu'un allumage est imminent). Elle s'affiche sur la carte avec la raison, et dans la synthèse. Par défaut : rien n'est envoyé.
+
+L'interrupteur **« Régler l'eau du poêle »** (désactivé par défaut) envoie la consigne à l'entité `climate` du poêle (`climate.set_temperature`), avec ces garde-fous :
+- uniquement pendant la marche du poêle ;
+- jamais en dessous de 58 °C par défaut (la pompe de circulation démarre à 55 °C pour éviter la condensation) ni au-dessus de 75 °C, ni hors des limites de l'entité du poêle ;
+- 5 °C au plus par changement, 30 min minimum entre deux changements, 6 changements par jour au plus, rien pour un écart de moins de 2 °C ;
+- relecture 90 s après chaque envoi : si le poêle n'a pas pris la consigne 3 fois de suite, l'interrupteur se désactive et une notification est envoyée.
+L'ajustement « besoin pressant » est une règle fixe, pas encore un apprentissage.
+
 ## Comment ça décide
 Heure d'allumage = échéance − (délai d'allumage + latence + besoin ÷ vitesse de montée de la pièce la plus lente) × marge. Délai d'allumage et vitesse de montée de chaque pièce sont **appris** à chaque cycle ; tant qu'ils ne le sont pas, des valeurs par défaut prudentes sont utilisées et signalées comme telles.
 
@@ -44,6 +54,6 @@ Désactivé par défaut (interrupteur « Allumage automatique »). Il n'allume q
 L'arrêt automatique est un interrupteur séparé, désactivé par défaut.
 
 ## Limites de cette version
-- Testée en simulation (59 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
-- N'agit que par marche/arrêt du poêle (allumage avec sa puissance et sa consigne par défaut). La consigne d'eau (loi d'eau) n'est pas encore pilotée.
+- Testée en simulation (65 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
+- N'agit que par marche/arrêt du poêle (allumage avec sa puissance et sa consigne par défaut). La consigne d'eau peut être réglée automatiquement (loi d'eau, 0.7), mais cette fonction est désactivée par défaut et n'a jamais été essayée sur un vrai poêle.
 - Un poêle ne devrait jamais dépendre d'un seul logiciel : gardez ses sécurités propres et vérifiez avec votre assurance/installateur.

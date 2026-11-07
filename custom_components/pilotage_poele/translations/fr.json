@@ -50,7 +50,11 @@
      "seuil_immediat": "Écart sous la consigne qui déclenche (°C)",
      "tetes_chambre": "Têtes thermostatiques de la zone Chambre",
      "tetes_maison": "Têtes thermostatiques de la zone Maison",
-     "tetes_decalage": "Décalage ajouté à la consigne des têtes (°C)"
+     "tetes_decalage": "Décalage ajouté à la consigne des têtes (°C)",
+     "eau_t0": "Loi d'eau : eau voulue à 0 °C dehors (°C)",
+     "eau_t15": "Loi d'eau : eau voulue à 15 °C dehors (°C)",
+     "eau_min": "Eau : jamais en dessous de (°C) — la pompe démarre à 55 °C",
+     "eau_max": "Eau : jamais au-dessus de (°C)"
     }
    }
   }
@@ -134,6 +138,9 @@
    },
    "tetes": {
     "name": "Piloter les têtes"
+   },
+   "eau": {
+    "name": "Régler l'eau du poêle"
    }
   },
   "button": {
