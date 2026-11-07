@@ -14,7 +14,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_CIBLE, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, CONF_ZONE,
+    CONF_CIBLE, CONF_ECART, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, CONF_ZONE,
     DOMAIN, ECHANTILLON_S, GRACE_FIN_CYCLE_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
 )
 from .model import (
@@ -331,15 +331,25 @@ class Pilote:
             return min(a_chauffer, key=lambda p: p.allumage)
         return candidats[0] if candidats else None
 
+    def _seuil_piece(self, c: dict[str, Any]) -> float:
+        """Écart sous la consigne qui déclenche l'allumage : celui de la pièce, sinon la valeur globale."""
+        try:
+            v = float(c.get(CONF_ECART))
+        except (TypeError, ValueError):
+            return float(self.opt["seuil_immediat"])
+        return v if v > 0 else float(self.opt["seuil_immediat"])
+
     def _plan_immediat(self, now: datetime, mesures: list[PieceMesure], marge: float) -> Plan | None:
-        seuil = float(self.opt["seuil_immediat"])
-        manque = [m for m in mesures if m.temperature is not None and m.cible is not None and m.cible - m.temperature > seuil]
+        seuils = {nom: self._seuil_piece(c) for nom, c in self.pieces_cfg()}
+        manque = [m for m in mesures if m.temperature is not None and m.cible is not None
+                  and m.cible - m.temperature > seuils.get(m.nom, float(self.opt["seuil_immediat"]))]
         if not manque:
             return None
         pl = planifier(now, now, mesures, self.appris, marge, deja_en_marche=False)
         if not pl.besoin or not pl.pieces:
             return None
         d0 = pl.pieces[0]
+        seuil = seuils.get(d0["nom"], float(self.opt["seuil_immediat"]))
         delai, delai_appris = self.appris.delai_allumage()
         raison = (f"Consigne en cours : {_v(d0['cible'])} °C pour « {d0['nom']} », qui est à {_v(d0['temperature'])} °C "
                   f"(il manque {_v(d0['besoin'])} °C, écart supérieur à {_v(seuil)} °C). Allumage immédiat conseillé : "
@@ -576,6 +586,7 @@ class Pilote:
                 "nom": nom, "temperature": _float(self.hass, c.get(CONF_TEMPERATURE)),
                 "consigne": None if cible is None else round(cible, 2),
                 "zone": ZONES.get(z) if self._zone_active(z, now) else None,
+                "ecart": self._seuil_piece(c), "ecart_propre": c.get(CONF_ECART) is not None,
             })
         return out
 

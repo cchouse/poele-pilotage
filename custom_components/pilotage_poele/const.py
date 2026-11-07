@@ -1,7 +1,7 @@
 """Constantes de l'intégration Pilotage poêle."""
 DOMAIN = "pilotage_poele"
 SUBENTRY_PIECE = "piece"
-VERSION = "0.5.3"
+VERSION = "0.5.4"
 URL_CARTE = "/pilotage_poele/pilotage-poele-card.js"
 
 # configuration principale
@@ -13,6 +13,7 @@ CONF_NOTIF = "notification"     # entité notify (facultatif)
 
 # pièce (sous-entrée)
 CONF_TEMPERATURE = "capteur_temperature"
+CONF_ECART = "ecart_declenchement"  # écart propre à la pièce (facultatif) ; vide = valeur globale
 CONF_CIBLE = "cible"            # entité qui donne la température visée (facultatif si la pièce est dans une zone)
 CONF_ZONE = "zone"              # zone de planning : « chambre » ou « maison » (facultatif)
 

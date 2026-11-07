@@ -67,7 +67,8 @@
       "name": "Nom de la pièce",
       "capteur_temperature": "Capteur de température",
       "cible": "Target temperature (entity, if no zone)",
-      "zone": "Planning zone (optional)"
+      "zone": "Planning zone (optional)",
+      "ecart_declenchement": "Gap that triggers ignition (°C, optional)"
      }
     },
     "reconfigure": {
@@ -76,7 +77,8 @@
       "name": "Nom de la pièce",
       "capteur_temperature": "Capteur de température",
       "cible": "Target temperature (entity, if no zone)",
-      "zone": "Planning zone (optional)"
+      "zone": "Planning zone (optional)",
+      "ecart_declenchement": "Gap that triggers ignition (°C, optional)"
      }
     }
    },

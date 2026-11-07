@@ -62,12 +62,13 @@
    "step": {
     "user": {
      "title": "Ajouter une pièce",
-     "description": "Choisissez le capteur de température et la zone de planning (Chambre ou Maison) : la consigne vient alors du planning de la zone. Sans zone, indiquez l'entité qui donne la température visée.",
+     "description": "Choisissez le capteur de température et la zone de planning (Chambre ou Maison) : la consigne vient alors du planning de la zone. Sans zone, indiquez l'entité qui donne la température visée. L'écart qui déclenche l'allumage est facultatif : vide, la valeur globale de « Configurer » s'applique.",
      "data": {
       "name": "Nom de la pièce",
       "capteur_temperature": "Capteur de température",
       "cible": "Température visée (entité, si pas de zone)",
-      "zone": "Zone de planning (facultatif)"
+      "zone": "Zone de planning (facultatif)",
+      "ecart_declenchement": "Écart qui déclenche l'allumage (°C, facultatif)"
      }
     },
     "reconfigure": {
@@ -76,7 +77,8 @@
       "name": "Nom de la pièce",
       "capteur_temperature": "Capteur de température",
       "cible": "Température visée (entité, si pas de zone)",
-      "zone": "Zone de planning (facultatif)"
+      "zone": "Zone de planning (facultatif)",
+      "ecart_declenchement": "Écart qui déclenche l'allumage (°C, facultatif)"
      }
     }
    },

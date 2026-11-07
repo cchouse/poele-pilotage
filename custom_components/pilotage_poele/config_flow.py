@@ -13,7 +13,7 @@ from homeassistant.helpers import selector
 
 from .planning import ZONES
 from .const import (
-    CONF_CIBLE, CONF_EAU, CONF_ZONE, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, DOMAIN,
+    CONF_CIBLE, CONF_ECART, CONF_EAU, CONF_ZONE, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, DOMAIN,
     OPTIONS_DEFAUT, SUBENTRY_PIECE,
 )
 
@@ -117,11 +117,14 @@ def _schema_piece(d: dict[str, Any] | None = None) -> vol.Schema:
                                           mode=selector.SelectSelectorMode.LIST)),
         vol.Optional(CONF_CIBLE, description={"suggested_value": d.get(CONF_CIBLE)}): selector.EntitySelector(
             selector.EntitySelectorConfig(domain=["sensor", "number", "input_number"])),
+        vol.Optional(CONF_ECART, description={"suggested_value": d.get(CONF_ECART)}): selector.NumberSelector(
+            selector.NumberSelectorConfig(min=0.2, max=3, step=0.1, mode=selector.NumberSelectorMode.BOX,
+                                          unit_of_measurement="°C")),
     })
 
 
 def _donnees_piece(u: dict[str, Any]) -> dict[str, Any]:
-    return {k: u[k] for k in (CONF_TEMPERATURE, CONF_ZONE, CONF_CIBLE) if u.get(k)}
+    return {k: u[k] for k in (CONF_TEMPERATURE, CONF_ZONE, CONF_CIBLE, CONF_ECART) if u.get(k)}
 
 
 class PieceSubentryFlow(ConfigSubentryFlow):
