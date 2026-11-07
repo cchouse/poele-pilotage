@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.5.2";
+const VERSION = "0.6.1";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -46,6 +46,12 @@ details { margin-top:14px; border:1px solid var(--divider-color); border-radius:
 summary { min-height:48px; display:flex; align-items:center; cursor:pointer; font-weight:600; color:var(--primary-text-color); }
 details p, details ul { margin:0 0 12px; font-size:.9rem; color:var(--primary-text-color); line-height:1.5; }
 ha-card { display:block; container-type:inline-size; }
+.synth { margin:0 0 14px; } .synth > summary { font-size:.95rem; }
+.tuiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:4px; }
+.tuile { border:1px solid var(--divider-color); border-radius:10px; padding:10px 12px; min-width:0; }
+.tuile .tl { font-size:.8rem; font-weight:600; color:var(--secondary-text-color); }
+.tuile .tv { font-size:1.45rem; font-weight:600; line-height:1.2; margin-top:2px; color:var(--primary-text-color); }
+.tuile .ts { font-size:.8rem; line-height:1.35; margin-top:2px; color:var(--secondary-text-color); }
 .grille { display:grid; grid-template-columns:1fr; gap:0 18px; align-items:start; }
 .c1, .c2, .c3 { min-width:0; }
 @container (min-width: 520px) { .grille { grid-template-columns:1fr 1fr; } .c3 { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:0 18px; align-items:start; } .c3 > * { min-width:0; } }
@@ -104,6 +110,21 @@ class PilotagePoeleCard extends HTMLElement {
     if (s === "corrigee") return "(appris, corrigé selon l'extérieur)";
     if (s === "defaut_ext") return "(défaut ajusté à l'extérieur, pas encore appris)";
     return y.montee_apprise ? "(appris)" : "(par défaut, pas encore appris)";
+  }
+  _synthese(a) {
+    const s = a.synthese || {}; const t = (l, v, sub) => `<div class="tuile"><div class="tl">${l}</div><div class="tv">${v}</div><div class="ts">${sub}</div></div>`;
+    const heures = (min) => `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")}`;
+    const out = [];
+    if (s.ext != null) {
+      const tend = { hausse: "en hausse", baisse: "en baisse", stable: "stable" }[s.tendance];
+      out.push(t("Extérieur", `${fmt(s.ext)} °C`, `min ${fmt(s.ext_min)} · max ${fmt(s.ext_max)} sur ${s.heures_donnees >= 20 ? "24 h" : fmt(s.heures_donnees, 0) + " h"}${tend ? " · " + tend : ""}`));
+    } else out.push(t("Extérieur", "–", "Pas de capteur : ajoutez-le dans « Reconfigurer »."));
+    if (s.int_moy != null) out.push(t("Intérieur", `${fmt(s.int_moy)} °C`, s.ecart_moy == null ? "moyenne des pièces" : s.ecart_moy > 0.05 ? `manque ${fmt(s.ecart_moy)} °C en moyenne${s.nb_sous ? ` · ${s.nb_sous} pièce${s.nb_sous > 1 ? "s" : ""} sous la consigne` : ""}` : "toutes à la consigne"));
+    out.push(t("Poêle sur 24 h", s.marche_min ? heures(s.marche_min) : "0 h 00", `${s.allumages || 0} allumage${(s.allumages || 0) > 1 ? "s" : ""} observé${(s.allumages || 0) > 1 ? "s" : ""}`));
+    if (s.dju != null) out.push(t("Besoin de chauffage", `${fmt(s.dju)} DJU`, "degrés-jours base 18 : plus c'est haut, plus il faut chauffer"));
+    if (s.perte != null) out.push(t("Perte de la maison", `−${fmt(s.perte, 2)} °C/h`, `sans chauffage, à l'écart actuel (${s.perte_apprise ? "apprise" : "estimée"})`));
+    if (s.eco_pct != null) out.push(t("Économie possible", `≈ ${fmt(s.eco_pct, 0)} %`, "d'énergie en moins pour 1 °C de consigne en moins"));
+    return `<details id="dsynth" class="synth" ${this._ouv && this._ouv.synthese === false ? "" : "open"}><summary>Synthèse</summary><div class="tuiles">${out.join("")}</div></details>`;
   }
   _tetes(a, zone) {
     const t = a.tetes || {}; const z = (t.zones || {})[zone];
@@ -275,6 +296,7 @@ class PilotagePoeleCard extends HTMLElement {
     r.innerHTML = `<style>${STYLE}</style><ha-card>
       <div class="tete"><span class="titre">Poêle à granulés</span><span class="puce ${pb ? "pb" : ""}"><span aria-hidden="true">${ICONE[a.etat] || "?"}</span> ${esc(a.etat_libelle)}</span></div>
       ${d.verrou ? `<div class="bandeau" role="alert" style="margin-bottom:10px;border-color:var(--error-color,#b3261e)"><b>⚠ Allumage automatique verrouillé</b> après un échec d'allumage. Vérifiez le poêle, puis réactivez l'allumage automatique.</div>` : ""}
+      ${this._synthese(a)}
       <div class="grille">
       <div class="c1">
         <div class="bandeau ${d.auto ? "act" : ""}">${ban}<span class="mode">${mode}</span>
@@ -306,6 +328,7 @@ class PilotagePoeleCard extends HTMLElement {
     </ha-card>`;
     this._monterPlanning(a);
     r.getElementById("dpieces")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { pieces: e.target.open }); });
+    r.getElementById("dsynth")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { synthese: e.target.open }); });
     r.getElementById("allumer")?.addEventListener("click", () => this._appel("button", "press", b.allumer));
     r.getElementById("annuler")?.addEventListener("click", () => this._appel("button", "press", b.annuler));
     for (const cle of ["auto", "arret_auto", "absent", "tetes"]) r.getElementById(cle)?.addEventListener("click", () => this._appel("switch", d[cle] ? "turn_off" : "turn_on", b[cle]));

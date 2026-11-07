@@ -532,3 +532,35 @@ async def test_exterieur_dans_le_plan(hass, freezer):
     p = entry.runtime_data.plan
     assert p.exterieur == 2.0 and "Extérieur : 2,0 °C" in p.raison
     assert p.pieces[0]["montee_source"] == "defaut_ext"
+
+
+async def test_synthese(hass, freezer):
+    hass.states.async_set("sensor.ext", "4.0")
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.0")
+    hass.config_entries.async_update_entry(entry, data={**entry.data, "exterieur": "sensor.ext"})
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    p = entry.runtime_data
+    now = p.historique and None or __import__("homeassistant.util.dt", fromlist=["x"]).now()
+    ts = now.timestamp()
+    arret, marche = 0, 2
+    # 24 h : arrêt, puis 2 marches de 1 h (12 lignes de 5 min chacune), extérieur de 0 à 8 °C
+    p.historique = []
+    for k in range(288):
+        t = ts - (287 - k) * 300
+        etat = marche if (60 <= k < 72 or 150 <= k < 162) else arret
+        p.historique.append([int(t), etat, None, 0.0 + 8.0 * k / 287, [19.0]])
+    s = p._synthese(now, p._mesures())
+    assert s["ext"] == 4.0 and s["ext_min"] == 0.0 and s["ext_max"] == 8.0
+    assert s["dju"] == 14.0                                      # 18 − (0 + 8) / 2
+    assert s["marche_min"] == 120 and s["allumages"] == 2
+    assert s["int_moy"] == 19.0 and s["ecart_moy"] == 1.5 and s["nb_sous"] == 1   # cible 20,5
+    assert s["perte"] > 0 and s["perte_apprise"] is False
+    assert abs(s["eco_pct"] - 100 / (20.5 - 4.0)) < 0.1
+    assert hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["synthese"]["ext"] == 4.0
+
+
+async def test_synthese_sans_capteur_exterieur(hass, freezer):
+    entry, _ = await installer(hass, freezer)
+    s = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["synthese"]
+    assert s["ext"] is None and "dju" not in s and "perte" not in s and "eco_pct" not in s

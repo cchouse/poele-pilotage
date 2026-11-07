@@ -659,6 +659,45 @@ class Pilote:
             })
         return out
 
+    def _synthese(self, now: datetime, mesures: list[PieceMesure]) -> dict[str, Any]:
+        """Indicateurs de synthèse (extérieur, intérieur, poêle sur 24 h, degrés-jours, pertes, économie)."""
+        ts = now.timestamp()
+        ext = self.exterieur
+        rows = [h for h in self.historique if h[0] >= ts - 86400]
+        out: dict[str, Any] = {"ext": ext}
+        exts = [h[3] for h in rows if len(h) >= 4 and h[3] is not None] + ([ext] if ext is not None else [])
+        if exts:
+            tmin, tmax = min(exts), max(exts)
+            out.update({"ext_min": round(tmin, 1), "ext_max": round(tmax, 1),
+                        "dju": round(max(0.0, 18.0 - (tmin + tmax) / 2.0), 1),     # DJU base 18 : 18 − (Tmin+Tmax)/2
+                        "heures_donnees": round(((rows[-1][0] if rows else ts) - (rows[0][0] if rows else ts)) / 3600.0, 1)})
+            anc = [h[3] for h in rows if len(h) >= 4 and h[3] is not None and ts - 4 * 3600 <= h[0] <= ts - 2 * 3600]
+            if ext is not None and anc:
+                d = ext - sum(anc) / len(anc)
+                out["tendance"] = "hausse" if d >= 0.5 else ("baisse" if d <= -0.5 else "stable")
+        temps = [m.temperature for m in mesures if m.temperature is not None]
+        if temps:
+            out["int_moy"] = round(sum(temps) / len(temps), 1)
+        ecarts = [m.cible - m.temperature for m in mesures if m.temperature is not None and m.cible is not None]
+        if ecarts:
+            out["ecart_moy"] = round(sum(ecarts) / len(ecarts), 2)
+            out["nb_sous"] = sum(1 for e in ecarts if e > 0.3)
+        on = (ETATS.index("allumage"), ETATS.index("marche"))
+        out["marche_min"] = round(sum(1 for h in rows if h[1] in on) * ECHANTILLON_S / 60)
+        out["allumages"] = sum(1 for i, h in enumerate(rows) if h[1] in on and (i == 0 or rows[i - 1][1] not in on) and i > 0)
+        if ext is not None:
+            pertes = [(self.appris.refroid(m.nom, m.temperature - ext)[0], self.appris.k_perte(m.nom)[1])
+                      for m in mesures if m.temperature is not None]
+            if pertes:
+                out["perte"] = round(sum(p for p, _ in pertes) / len(pertes), 2)
+                out["perte_apprise"] = all(a for _, a in pertes)
+            cons = [m.cible for m in mesures if m.cible is not None] or temps
+            if cons:
+                dt = sum(cons) / len(cons) - ext
+                if dt >= 3:
+                    out["eco_pct"] = round(100.0 / dt, 1)     # pertes ∝ écart : 1 °C en moins ≈ 1/écart d'énergie en moins
+        return out
+
     # ---------- état pour l'interface ----------
     def snapshot(self) -> dict[str, Any]:
         now = dt_util.now()
@@ -679,6 +718,7 @@ class Pilote:
             "arret": self.conditions_arret(now.timestamp(), self._mesures()),
             "zones": self._zones_snapshot(now),
             "pieces_etat": self._pieces_etat(now),
+            "synthese": self._synthese(now, self._mesures()),
             "tetes": {"actif": bool(self.drapeaux.get("tetes", True)), "decalage": float(self.opt["tetes_decalage"]),
                       "zones": {z: {"nb": len(self._tetes_zone(z)), **self.tetes_info.get(z, {})}
                                 for z in ZONES if self._tetes_zone(z)}},

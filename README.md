@@ -1,4 +1,4 @@
-# Pilotage poêle (Home Assistant) — version 0.6.0
+# Pilotage poêle (Home Assistant) — version 0.6.1
 
 Calcule **quand allumer** le poêle à granulés pour que les pièces soient à la bonne température à l'heure voulue, apprend les inerties de la maison, et explique chaque décision. Par défaut : **mode conseil**, rien n'est envoyé au poêle.
 
@@ -27,6 +27,15 @@ Si vous avez indiqué un capteur extérieur (« Reconfigurer »), il entre dans 
 ## Têtes thermostatiques (0.6)
 Dans « Configurer », choisissez les têtes (entités `climate`) de la zone **Chambre** et de la zone **Maison**, et un décalage facultatif (par exemple +1 °C pour une tête mal placée). L'intégration envoie la consigne de la zone à ses têtes **à chaque changement** (tranche du planning, dérogation, retour au planning) et au démarrage, en respectant le minimum et le maximum de chaque tête. Interrupteur « Piloter les têtes » pour suspendre. Une tête indisponible est réessayée chaque minute. Ne la pilotez pas aussi depuis une autre intégration (par exemple Confort ressenti) : elles se disputeraient les mêmes têtes.
 
+## Synthèse en haut de la carte (0.6.1)
+Une zone repliable de six tuiles, calculées avec les données déjà enregistrées (24 h) :
+- **Extérieur** : valeur actuelle, minimum, maximum et tendance.
+- **Intérieur** : moyenne des pièces et écart moyen à la consigne.
+- **Poêle sur 24 h** : durée de marche et nombre d'allumages observés.
+- **Besoin de chauffage** : degrés-jours unifiés (DJU) base 18, soit 18 − (Tmin + Tmax) / 2, la méthode utilisée par les chauffagistes pour comparer la rigueur du climat.
+- **Perte de la maison** : °C/h perdus sans chauffage à l'écart actuel avec l'extérieur (appris sur vos arrêts, estimé tant que rien n'est appris).
+- **Économie possible** : les pertes étant proportionnelles à l'écart intérieur − extérieur, baisser la consigne d'1 °C économise environ 1 ÷ écart de l'énergie (≈ 6 % pour 17 °C d'écart). C'est un ordre de grandeur, pas une mesure.
+
 ## Comment ça décide
 Heure d'allumage = échéance − (délai d'allumage + latence + besoin ÷ vitesse de montée de la pièce la plus lente) × marge. Délai d'allumage et vitesse de montée de chaque pièce sont **appris** à chaque cycle ; tant qu'ils ne le sont pas, des valeurs par défaut prudentes sont utilisées et signalées comme telles.
 
@@ -35,6 +44,6 @@ Désactivé par défaut (interrupteur « Allumage automatique »). Il n'allume q
 L'arrêt automatique est un interrupteur séparé, désactivé par défaut.
 
 ## Limites de cette version
-- Testée en simulation (57 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
+- Testée en simulation (59 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
 - N'agit que par marche/arrêt du poêle (allumage avec sa puissance et sa consigne par défaut). La consigne d'eau (loi d'eau) n'est pas encore pilotée.
 - Un poêle ne devrait jamais dépendre d'un seul logiciel : gardez ses sécurités propres et vérifiez avec votre assurance/installateur.
