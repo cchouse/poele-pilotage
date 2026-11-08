@@ -343,7 +343,12 @@ def garde_fous(now: datetime, etat: str, p: Params, allumages_aujourdhui: int, d
     if allumages_aujourdhui >= p.max_allumages:
         return False, f"Limite atteinte : {p.max_allumages} allumages automatiques aujourd'hui."
     if dernier_arret is not None and (now.timestamp() - dernier_arret) < p.arret_min * 60:
-        return False, f"Arrêt trop récent : j'attends {round(p.arret_min)} min entre deux allumages."
+        reste = max(1, round((dernier_arret + p.arret_min * 60 - now.timestamp()) / 60))
+        fin = datetime.fromtimestamp(dernier_arret + p.arret_min * 60, now.tzinfo).strftime("%H:%M")
+        h, m = divmod(reste, 60)
+        duree = f"{h} h {m:02d} min" if h else f"{m} min"
+        return False, (f"Arrêt trop récent : {round(p.arret_min)} min d'attente entre deux allumages, "
+                       f"encore {duree} (jusqu'à {fin}).")
     if plan is not None and plan.echeance is not None and ignore_echeance is not None and abs(plan.echeance.timestamp() - ignore_echeance) < 1:
         return False, "Allumage annulé par vous pour cette échéance."
     return True, "Toutes les conditions sont réunies."

@@ -1,4 +1,4 @@
-# Pilotage poêle (Home Assistant) — version 0.8.1
+# Pilotage poêle (Home Assistant) — version 0.8.2
 
 Calcule **quand allumer** le poêle à granulés pour que les pièces soient à la bonne température à l'heure voulue, apprend les inerties de la maison, et explique chaque décision. Par défaut : **mode conseil**, rien n'est envoyé au poêle.
 
