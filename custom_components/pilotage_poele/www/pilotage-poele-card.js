@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.7.1";
+const VERSION = "0.8.0";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -278,8 +278,8 @@ class PilotagePoeleCard extends HTMLElement {
     // bandeau « prochain allumage »
     let ban;
     if (a.etat === "marche" || a.etat === "allumage") ban = `<div class="heure">${esc(a.etat_libelle)}</div><div class="sous">${a.run ? `Depuis ${hhmm(a.run.debut)} · allumage ${esc(SOURCES[a.run.source] || a.run.source)}` : ""}</div>`;
-    else if (p && p.besoin && p.allumage) ban = `<div class="heure">${p.en_retard ? "Maintenant" : hhmm(p.allumage)}</div><div class="sous">${p.immediat ? "Besoin immédiat : une pièce est sous la consigne en cours" : `Prochain allumage conseillé — objectif ${hhmm(p.echeance)}`}</div><div class="pourquoi">${esc(p.raison)}</div>`;
-    else ban = `<div class="heure">Pas d'allumage prévu</div><div class="pourquoi">${esc(p ? p.raison : "Je n'ai pas encore de pièce à surveiller : ajoutez une pièce depuis la page de l'intégration.")}</div>`;
+    else if (p && p.besoin && p.allumage) ban = `<div class="heure">${p.en_retard ? "Maintenant" : hhmm(p.allumage)}</div><div class="sous">${p.immediat ? "Besoin immédiat : une pièce est sous la consigne en cours" : p.seuil ? `Estimé : « ${esc(p.limitante)} » passera sous son seuil vers ${hhmm(p.echeance)}` : `Prochain allumage conseillé — objectif ${hhmm(p.echeance)}`}</div><div class="pourquoi">${esc(p.raison)}</div>`;
+    else ban = `<div class="heure">Pas d'allumage prévu</div><div class="pourquoi">${esc(p ? p.raison : (a.pieces_etat && a.pieces_etat.length ? "Rien à anticiper pour le moment." : "Je n'ai pas encore de pièce à surveiller : ajoutez une pièce depuis la page de l'intégration."))}</div>`;
     const mode = d.auto ? "Automatique : j'allume seul si toutes les conditions sont réunies" : "Mode conseil : rien n'est envoyé au poêle";
     const concernees = new Map(((p && p.pieces) || []).map((x, i) => [x.nom, [x, i]]));
     const toutes = a.pieces_etat || [];

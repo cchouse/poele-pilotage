@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 import pytest
+from homeassistant.util import dt as dt_util
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
@@ -117,7 +118,8 @@ async def test_pas_d_allumage_si_pas_de_besoin(hass, freezer):
     entry, appels = await installer(hass, freezer, temp="21.5")
     await bascule(hass, entry, "auto")
     assert appels["on"] == []
-    assert hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["plan"]["besoin"] is False
+    plan = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["plan"]
+    assert plan["besoin"] is False or (plan["seuil"] and not plan["immediat"] and not plan["en_retard"])
 
 
 async def test_pas_d_allumage_trop_pres_de_l_echeance(hass, freezer):
@@ -660,3 +662,45 @@ async def test_eau_desactivee_apres_trois_refus(hass, freezer):
     assert len(envois) == 3
     assert hass.states.get(eid(hass, entry, "switch", "eau")).state == "off"
     assert any("désactivé" in a.data["message"] for a in appels["notif"])
+
+
+
+# ---------- estimation sans planning : la pièce va passer sous son seuil ----------
+async def test_allumage_estime_sans_planning(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.2", zone="chambre")
+    await hass.services.async_call("pilotage_poele", "derogation", {"zone": "chambre", "consigne": 20.5}, blocking=True)
+    await avancer(hass, freezer, entry, 1)
+    p = entry.runtime_data.plan
+    assert p.seuil and p.besoin and not p.immediat and not p.en_retard
+    assert "Aucun changement de consigne prévu" in p.raison and "passera sous 20,0 °C" in p.raison
+    # 0,2 °C d'écart à 0,15 °C/h : seuil dans 80 min ; allumage 62,5 min avant : dans une vingtaine de minutes
+    delta = (p.allumage - dt_util.now()).total_seconds() / 60
+    assert 10 < delta < 25
+    await bascule(hass, entry, "auto")
+    assert appels["on"] == []
+    await avancer(hass, freezer, entry, 5)
+    hass.states.async_set(TEMP, "20.05")                         # la pièce a refroidi : le seuil approche
+    await avancer(hass, freezer, entry, 2)
+    assert len(appels["on"]) == 1                                # l'heure est venue : allumage automatique
+    snap = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["plan"]
+    assert snap["seuil"] is True
+
+
+async def test_annuler_une_estimation_sans_planning(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.2", zone="chambre")
+    await hass.services.async_call("pilotage_poele", "derogation", {"zone": "chambre", "consigne": 20.5}, blocking=True)
+    await avancer(hass, freezer, entry, 1)
+    assert entry.runtime_data.plan.seuil
+    await entry.runtime_data.annuler()
+    assert not (entry.runtime_data.plan and entry.runtime_data.plan.seuil)
+    await bascule(hass, entry, "auto")
+    hass.states.async_set(TEMP, "20.05")
+    await avancer(hass, freezer, entry, 5)
+    assert appels["on"] == []
+
+
+async def test_aucune_consigne_message_clair(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.2", zone="chambre")
+    await avancer(hass, freezer, entry, 1)
+    p = entry.runtime_data.plan
+    assert p is not None and not p.besoin and "Aucune pièce n'a de température et de consigne" in p.raison

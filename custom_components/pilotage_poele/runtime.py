@@ -21,7 +21,7 @@ from .model import (
     ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, amorcer_depuis_historique, classer, echeances,
     garde_fous, pente, planifier,
 )
-from .model import _v, note_montee
+from .model import LATENCE_MIN, _v, note_montee
 
 from .planning import ZONES, changements, consigne_a, prochain_changement, valider
 
@@ -473,10 +473,63 @@ class Pilote:
             ms = self._mesures(dt, lambda c, info=info: (c.get(CONF_ZONE) in info["zones"] and self._zone_active(c.get(CONF_ZONE), dt))
                                or (info["classique"] and self._piece_classique(c, now)))
             candidats.append(planifier(now, dt, ms, self.appris, marge, deja_en_marche=marche, exterieur=self.exterieur))
-        a_chauffer = [p for p in candidats if p.besoin and p.allumage is not None]
+        # 3. sans changement de consigne : quand une pièce va-t-elle passer sous son seuil en refroidissant ?
+        seuil = None
+        if self.opt["immediat_actif"] and not marche and now.timestamp() >= self.ignore_immediat:
+            seuil = self._plan_seuil(now, mesures, marge)
+        a_chauffer = [p for p in candidats + ([seuil] if seuil else []) if p.besoin and p.allumage is not None]
         if a_chauffer:
             return min(a_chauffer, key=lambda p: p.allumage)
-        return candidats[0] if candidats else None
+        premier = candidats[0] if candidats else None
+        if premier and premier.pieces:
+            return premier
+        return seuil or premier
+
+    def _plan_seuil(self, now: datetime, mesures: list[PieceMesure], marge: float) -> Plan | None:
+        """Estime l'heure où une pièce passera sous (consigne − écart de déclenchement) selon sa vitesse de baisse,
+        puis recule de la durée d'allumage + latence pour conseiller l'heure d'allumage."""
+        ext = self.exterieur
+        delai, delai_appris = self.appris.delai_allumage()
+        avance = (delai + LATENCE_MIN) * marge
+        det: list[dict[str, Any]] = []
+        meilleur = None
+        for nom, c in self.pieces_cfg():
+            mes = next((x for x in mesures if x.nom == nom), None)
+            if mes is None or mes.temperature is None or mes.cible is None:
+                continue
+            s = self._seuil_piece(c)
+            limite = mes.cible - s
+            rate, rate_appris = self.appris.refroid(nom, None if ext is None else mes.temperature - ext)
+            dm = self.appris.montee_detail(nom, ext, (mes.temperature + mes.cible) / 2.0)
+            det.append({"nom": nom, "temperature": round(mes.temperature, 2), "cible": round(mes.cible, 2),
+                        "prevue": round(mes.temperature, 2), "besoin": 0.0, "montee": round(dm["v"], 2),
+                        "montee_apprise": dm["appris"], "montee_source": dm["source"], "tranche": dm["tranche"],
+                        "duree_min": 0, "refroid_appris": rate_appris, "baisse": round(rate, 2), "limite": round(limite, 2)})
+            if mes.temperature <= limite or rate < 0.02:
+                continue                       # déjà sous le seuil (c'est le besoin immédiat) ou ne refroidit pas
+            heures = (mes.temperature - limite) / rate
+            if heures <= 36 and (meilleur is None or heures < meilleur[0]):
+                meilleur = (heures, mes, s, rate, rate_appris, limite)
+        if not det:
+            return Plan(False, raison="Aucune pièce n'a de température et de consigne en cours : je ne peux rien anticiper. "
+                                      "Choisissez une zone et un planning, ou réglez la consigne avec + / −.")
+        if meilleur is None:
+            return Plan(False, pieces=det, raison="Aucun changement de consigne prévu et aucune pièce ne passera sous son seuil "
+                                                  "dans les 36 prochaines heures.", exterieur=ext)
+        heures, mes, s, rate, rate_appris, limite = meilleur
+        det.sort(key=lambda d: d["nom"] != mes.nom)
+        t_cross = now + timedelta(hours=heures)
+        allumage = t_cross - timedelta(minutes=avance)
+        retard = allumage < now
+        allumage = max(allumage, now)
+        raison = (f"Aucun changement de consigne prévu. « {mes.nom} » est à {_v(mes.temperature)} °C pour une consigne de "
+                  f"{_v(mes.cible)} °C et perd environ {_v(rate, 2)} °C/h"
+                  f"{'' if ext is None else f' avec {_v(ext)} °C dehors'} ({'appris' if rate_appris else 'estimé'}) : "
+                  f"elle passera sous {_v(limite)} °C (consigne − {_v(s)} °C) vers {t_cross.strftime('%H:%M')}. "
+                  f"Allumage conseillé à {allumage.strftime('%H:%M')} : {round(delai)} min d'allumage"
+                  f"{'' if delai_appris else ' (par défaut)'} + {round(LATENCE_MIN)} min de latence, avec "
+                  f"{round((marge - 1) * 100)} % de marge.")
+        return Plan(True, t_cross, allumage, round(avance), mes.nom, det, raison, retard, False, ext, True)
 
     def _seuil_piece(self, c: dict[str, Any]) -> float:
         """Écart sous la consigne qui déclenche l'allumage : celui de la pièce, sinon la valeur globale."""
@@ -652,13 +705,16 @@ class Pilote:
             return  # une commande est en attente de confirmation : on ne la renvoie jamais
         if plan.allumage > now:
             return
-        if (plan.echeance - now) < timedelta(minutes=20):
+        if not plan.seuil and (plan.echeance - now) < timedelta(minutes=20):
             return  # trop tard pour que ce soit utile : on ne rallume pas juste avant l'échéance
         await self._commande("turn_on", "auto", plan)
         self.allumages.append(ts)
         if plan.immediat:
             msg = (f"Poêle allumé automatiquement à {now.strftime('%H:%M')} : « {plan.limitante} » est sous la consigne en cours. "
                    "Pour annuler : bouton « Annuler » du pilotage poêle.")
+        elif plan.seuil:
+            msg = (f"Poêle allumé automatiquement à {now.strftime('%H:%M')} : « {plan.limitante} » se refroidit et passera "
+                   f"sous son seuil vers {plan.echeance.strftime('%H:%M')}. Pour annuler : bouton « Annuler » du pilotage poêle.")
         else:
             msg = (f"Poêle allumé automatiquement à {now.strftime('%H:%M')} pour que « {plan.limitante} » soit à température à "
                    f"{plan.echeance.strftime('%H:%M')}. Pour annuler : bouton « Annuler » du pilotage poêle.")
@@ -699,7 +755,7 @@ class Pilote:
 
     async def annuler(self) -> None:
         """Annule l'allumage prévu pour la prochaine échéance ; éteint si le poêle a été allumé par l'auto/force."""
-        if self.plan and self.plan.immediat:
+        if self.plan and (self.plan.immediat or self.plan.seuil):
             self.ignore_immediat = dt_util.utcnow().timestamp() + 2 * 3600     # j'ignore le besoin immédiat pendant 2 h
             suite = self._calculer_plan(dt_util.now(), self._mesures(), avec_immediat=False)
             if suite and suite.echeance:
@@ -812,7 +868,7 @@ class Pilote:
                 "besoin": plan.besoin, "echeance": int(plan.echeance.timestamp()) if plan.echeance else None,
                 "allumage": int(plan.allumage.timestamp()) if plan.allumage else None, "duree_min": plan.duree_min,
                 "limitante": plan.limitante, "raison": plan.raison, "en_retard": plan.en_retard, "pieces": plan.pieces,
-                "immediat": plan.immediat,
+                "immediat": plan.immediat, "seuil": plan.seuil,
             },
             "autorisation": {"ok": ok, "raison": raison_gf},
             "arret": self.conditions_arret(now.timestamp(), self._mesures()),

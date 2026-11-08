@@ -222,6 +222,7 @@ class Plan:
     en_retard: bool = False
     immediat: bool = False
     exterieur: float | None = None
+    seuil: bool = False          # estimé sans changement de consigne : la pièce va passer sous son seuil
 
 
 def _v(x: float, n: int = 1) -> str:
