@@ -704,3 +704,42 @@ async def test_aucune_consigne_message_clair(hass, freezer):
     await avancer(hass, freezer, entry, 1)
     p = entry.runtime_data.plan
     assert p is not None and not p.besoin and "Aucune pièce n'a de température et de consigne" in p.raison
+
+
+# ---------- journal des commandes, correction directe, consigne étrangère ----------
+async def test_eau_hors_limites_corrigee_d_un_coup(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
+    entry = await _ext(hass, entry, 0.0)                         # courbe : 70 °C
+    _poele_eau(hass, 25)                                         # valeur aberrante
+    envois = async_mock_service(hass, "climate", "set_temperature")
+    await bascule(hass, entry, "eau")
+    await avancer(hass, freezer, entry, 1)
+    assert [a.data["temperature"] for a in envois] == [70]       # retour direct, pas 30 puis 35...
+    c = entry.runtime_data.commandes[-1]
+    assert c["source"] == "eau" and "correction" in c["raison"] and c["valeur"] == 70
+
+
+async def test_journal_des_commandes(hass, freezer):
+    hass.states.async_set(TETE1, "heat", {})
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.0", zone="chambre")
+    await _planning(hass)
+    await _tetes(hass, entry, tetes_chambre=[TETE1])
+    await avancer(hass, freezer, entry, 1)
+    await entry.runtime_data.allumer_maintenant()
+    j = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["commandes"]
+    assert [c["source"] for c in j][:2] == ["force", "tetes"] or {c["source"] for c in j} >= {"force", "tetes"}
+    assert j[0]["service"] == "turn_on" and j[0]["entite"] == POELE                 # le plus récent d'abord
+    assert any(c["entite"] == TETE1 and c["valeur"] == 20.5 for c in j)
+
+
+async def test_consigne_etrangere_signalee(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
+    _poele_eau(hass, 62, statut="Off")
+    await avancer(hass, freezer, entry, 2)                       # référence : 62 °C
+    hass.states.async_set(POELE, "off", {"hvac_action": "off", "temperature": 25, "min_temp": 50, "max_temp": 80})
+    await avancer(hass, freezer, entry, 2)
+    ext = [c for c in entry.runtime_data.commandes if c["source"] == "externe"]
+    assert len(ext) == 1 and ext[0]["valeur"] == 25
+    assert any("sans que le pilotage" in a.data["message"] for a in appels["notif"])
+    await avancer(hass, freezer, entry, 5)
+    assert len([c for c in entry.runtime_data.commandes if c["source"] == "externe"]) == 1   # pas de répétition

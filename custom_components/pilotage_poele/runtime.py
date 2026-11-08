@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_CIBLE, CONF_ECART, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, CONF_ZONE,
-    DOMAIN, EAU_ECART_MIN, EAU_INTERVALLE_S, EAU_MAX_PAR_JOUR, EAU_PAS_MAX, ECHANTILLON_S, GRACE_FIN_CYCLE_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
+    COMMANDES_MAX, DOMAIN, EAU_ECART_MIN, EAU_INTERVALLE_S, EAU_MAX_PAR_JOUR, EAU_PAS_MAX, ECHANTILLON_S, GRACE_FIN_CYCLE_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
 )
 from .model import (
     ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, amorcer_depuis_historique, classer, echeances,
@@ -76,6 +76,8 @@ class Pilote:
         self.plan: Plan | None = None
         self.autorisation: tuple[bool, str] = (False, "")
         self.derniere_action: dict[str, Any] | None = None
+        self.commandes: list[dict[str, Any]] = []       # journal de tout ce que j'envoie au poêle et aux têtes
+        self._eau_vue: float | None = None             # dernière consigne du poêle observée (détection d'une valeur étrangère)
         self.echantillons: dict[str, list[tuple[float, float]]] = {}
         self._froid_appris_pour: float | None = None
         self._cmd_off_ts: float | None = None
@@ -119,6 +121,7 @@ class Pilote:
         self.dernier_arret = d.get("dernier_arret")
         self.allumages = [t for t in d.get("allumages", []) if t > dt_util.utcnow().timestamp() - 172800]
         self.ignore_echeance = d.get("ignore_echeance")
+        self.commandes = list(d.get("commandes", []))[-COMMANDES_MAX:]
         self.eau_changes = [t for t in d.get("eau_changes", []) if t > dt_util.utcnow().timestamp() - 86400]
         self.cmd = d.get("cmd")
         self.run = d.get("run")
@@ -170,6 +173,7 @@ class Pilote:
             "allumages": self.allumages, "ignore_echeance": self.ignore_echeance, "cmd": self.cmd, "run": self.run,
             "cmd_off": self._cmd_off_ts, "amorce": self.amorce, "planning": self.planning,
             "derogations": self.derogations, "ignore_immediat": self.ignore_immediat, "eau_changes": self.eau_changes,
+            "commandes": self.commandes[-COMMANDES_MAX:],
         }
 
     def _sauver(self) -> None:
@@ -362,6 +366,7 @@ class Pilote:
                     self._sauver()
                     await self._notifier("Poêle : le réglage automatique de l'eau est désactivé, le poêle n'a pas pris "
                                          "la consigne 3 fois de suite. Vérifiez son entité.")
+        await self._surveiller_consigne_eau(ts)
         if not self.drapeaux.get("eau") or self.eau_info is None or self.etat != "marche":
             return
         st = self.hass.states.get(poele)
@@ -371,27 +376,54 @@ class Pilote:
         cur = float(cur)
         lo, hi = self._bornes_eau()
         cible = float(self.eau_info["c"])
-        if abs(cible - cur) < EAU_ECART_MIN and lo <= cur <= hi:
+        hors_limites = not lo <= cur <= hi
+        if not hors_limites and abs(cible - cur) < EAU_ECART_MIN:
             return
-        if e and ts - e["ts"] < EAU_INTERVALLE_S:
+        if e and ts - e["ts"] < (300 if hors_limites else EAU_INTERVALLE_S):
             return
         self.eau_changes = [t for t in self.eau_changes if t > ts - 86400]
         if len(self.eau_changes) >= EAU_MAX_PAR_JOUR:
             return
-        nouveau = round(min(hi, max(lo, cur + max(-EAU_PAS_MAX, min(EAU_PAS_MAX, cible - cur)))))
+        if hors_limites:                               # valeur aberrante : retour direct à la consigne conseillée
+            nouveau = round(min(hi, max(lo, cible)))
+        else:
+            nouveau = round(min(hi, max(lo, cur + max(-EAU_PAS_MAX, min(EAU_PAS_MAX, cible - cur)))))
         if nouveau == round(cur):
             return
+        raison = (f"correction : consigne de {round(cur)} °C hors des limites {round(lo)}–{round(hi)} °C" if hors_limites
+                  else f"loi d'eau : {round(cur)} → {nouveau} °C")
         try:
             async with asyncio.timeout(20):
                 await self.hass.services.async_call("climate", "set_temperature",
                                                     {"entity_id": poele, "temperature": nouveau}, blocking=True)
             self.eau_envoi = {"c": nouveau, "ts": ts, "verifie": False, "erreur": None, "avant": cur}
+            self._noter_commande(poele, "set_temperature", "eau", nouveau, raison)
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Pilotage poêle : consigne d'eau refusée : %s", err)
             self.eau_envoi = {"c": nouveau, "ts": ts, "verifie": True, "erreur": str(err), "avant": cur}
+            self._noter_commande(poele, "set_temperature", "eau", nouveau, raison, str(err))
             self._eau_echecs += 1
         self.eau_changes.append(ts)
         self._sauver()
+
+    async def _surveiller_consigne_eau(self, ts: float) -> None:
+        """Signale une consigne du poêle qui saute hors des limites sans que je l'aie envoyée."""
+        st = self.hass.states.get(self.cfg[CONF_POELE])
+        cur = None if st is None else st.attributes.get("temperature")
+        if not isinstance(cur, (int, float)):
+            return
+        cur = float(cur)
+        avant, self._eau_vue = self._eau_vue, cur
+        if avant is None or cur == avant:
+            return
+        lo, hi = self._bornes_eau()
+        envoye = self.eau_envoi and abs(self.eau_envoi["c"] - cur) < 0.6 and ts - self.eau_envoi["ts"] < 600
+        if lo <= avant <= hi and not lo <= cur <= hi and not envoye:
+            self._noter_commande(self.cfg[CONF_POELE], "set_temperature", "externe", cur,
+                                 f"consigne reçue d'ailleurs, hors des limites {round(lo)}–{round(hi)} °C")
+            await self._notifier(f"Poêle : la consigne est passée de {_v(avant, 0)} à {_v(cur, 0)} °C sans que le pilotage "
+                                 f"poêle l'ait envoyée (limites {round(lo)}–{round(hi)} °C). Origine à chercher : programmation "
+                                 "du poêle ou de l'application Duepi, automatisation, autre intégration.")
 
     # ---------- têtes thermostatiques ----------
     def _tetes_zone(self, zone: str) -> list[str]:
@@ -427,8 +459,10 @@ class Pilote:
                         await self.hass.services.async_call("climate", "set_temperature",
                                                             {"entity_id": e, "temperature": c}, blocking=True)
                     self._tetes_envoye[e] = cible
+                    self._noter_commande(e, "set_temperature", "tetes", c, f"consigne de la zone {ZONES[z]}")
                 except Exception as err:  # noqa: BLE001 - une tête en panne ne doit jamais bloquer le pilotage
                     erreurs.append(f"{e} : {err}")
+                    self._noter_commande(e, "set_temperature", "tetes", c, f"consigne de la zone {ZONES[z]}", str(err))
             avant = self.tetes_info.get(z, {})
             if erreurs:
                 if avant.get("erreur") != erreurs[0]:
@@ -720,6 +754,13 @@ class Pilote:
                    f"{plan.echeance.strftime('%H:%M')}. Pour annuler : bouton « Annuler » du pilotage poêle.")
         await self._notifier(msg)
 
+    def _noter_commande(self, entite: str, service: str, source: str, valeur: float | None = None,
+                        raison: str | None = None, erreur: str | None = None) -> None:
+        """Garde la trace de chaque ordre envoyé (ou reçu d'ailleurs), pour savoir qui a fait quoi."""
+        self.commandes.append({"ts": int(dt_util.utcnow().timestamp()), "entite": entite, "service": service,
+                               "source": source, "valeur": valeur, "raison": raison, "erreur": erreur})
+        del self.commandes[:-COMMANDES_MAX]
+
     async def _commande(self, service: str, source: str, plan: Plan | None = None) -> None:
         ts = dt_util.utcnow().timestamp()
         self.derniere_action = {"ts": ts, "service": service, "source": source,
@@ -733,8 +774,11 @@ class Pilote:
         except Exception as err:  # noqa: BLE001 — on ne casse jamais la boucle
             _LOGGER.error("Commande %s refusée : %s", service, err)
             self.derniere_action["erreur"] = str(err)
+            self._noter_commande(self.cfg[CONF_POELE], service, source, raison=plan.raison if plan else None, erreur=str(err))
             if service == "turn_on":
                 self.cmd = None
+        if not self.derniere_action.get("erreur"):
+            self._noter_commande(self.cfg[CONF_POELE], service, source, raison=plan.raison if plan else None)
         self._sauver()
 
     async def _notifier(self, message: str) -> None:
@@ -876,6 +920,7 @@ class Pilote:
             "pieces_etat": self._pieces_etat(now),
             "synthese": self._synthese(now, self._mesures()),
             "eau_poele": self._eau_snapshot(),
+            "commandes": list(reversed(self.commandes[-15:])),
             "tetes": {"actif": bool(self.drapeaux.get("tetes", True)), "decalage": float(self.opt["tetes_decalage"]),
                       "zones": {z: {"nb": len(self._tetes_zone(z)), **self.tetes_info.get(z, {})}
                                 for z in ZONES if self._tetes_zone(z)}},

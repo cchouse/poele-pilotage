@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.8.0";
+const VERSION = "0.8.1";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -46,6 +46,7 @@ details { margin-top:14px; border:1px solid var(--divider-color); border-radius:
 summary { min-height:48px; display:flex; align-items:center; cursor:pointer; font-weight:600; color:var(--primary-text-color); }
 details p, details ul { margin:0 0 12px; font-size:.9rem; color:var(--primary-text-color); line-height:1.5; }
 ha-card { display:block; container-type:inline-size; }
+ul.liste { margin:6px 0; padding-left:18px; font-size:.85rem; line-height:1.4; } ul.liste li { margin-bottom:4px; }
 .synth { margin:0 0 14px; } .synth > summary { font-size:.95rem; }
 .tuiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:4px; }
 .tuile { border:1px solid var(--divider-color); border-radius:10px; padding:10px 12px; min-width:0; }
@@ -136,6 +137,15 @@ class PilotagePoeleCard extends HTMLElement {
     return `<div class="sec"><h3>Eau du poêle : ${fmt(c.c, 0)} °C conseillée</h3>
       <p class="petit">Actuellement ${e.actuelle == null ? "–" : fmt(e.actuelle, 0) + " °C"}. ${esc(c.raison)}</p>
       <p class="petit">${etat}</p>${der}</div>`;
+  }
+  _commandes(a) {
+    const l = a.commandes || [];
+    const src = { auto: "allumage automatique", force: "bouton « Allumer maintenant »", annulation: "bouton « Annuler »", arret_auto: "arrêt automatique",
+                  securite: "sécurité", eau: "loi d'eau", tetes: "têtes thermostatiques", externe: "⚠ reçu d'ailleurs (pas envoyé par moi)" };
+    const srv = { turn_on: "Allumer", turn_off: "Éteindre", set_temperature: "Consigne" };
+    const nom = (e) => (a.pieces_etat || []).length && e && e.startsWith("climate.") ? e.replace("climate.", "") : e;
+    const lignes = l.map((c) => `<li>${hhmm(c.ts)} · ${srv[c.service] || esc(c.service)}${c.valeur != null ? " " + fmt(c.valeur, 0) + " °C" : ""} → ${esc(nom(c.entite))} · ${src[c.source] || esc(c.source)}${c.raison ? ` — ${esc(c.raison)}` : ""}${c.erreur ? ` ⚠ ${esc(c.erreur)}` : ""}</li>`).join("");
+    return `<details id="djournal" class="sec" ${this._ouv && this._ouv.journal ? "open" : ""}><summary>Commandes envoyées (${l.length})</summary>${lignes ? `<ul class="liste">${lignes}</ul>` : `<p class="petit">Aucune commande depuis le démarrage.</p>`}<p class="petit">Si une consigne change sans apparaître ici, elle ne vient pas de moi.</p></details>`;
   }
   _tetes(a, zone) {
     const t = a.tetes || {}; const z = (t.zones || {})[zone];
@@ -316,6 +326,7 @@ class PilotagePoeleCard extends HTMLElement {
           <button class="b" id="annuler" ${b.annuler ? "" : "disabled"}>${actif ? "■ Annuler / éteindre" : "✕ Annuler l'allumage prévu"}</button></div>
         <div class="inter">${inter("auto", "Allumage automatique")}${inter("arret_auto", "Arrêt automatique")}${inter("absent", "Mode absent")}${Object.keys((a.tetes || {}).zones || {}).length ? inter("tetes", "Piloter les têtes") : ""}${a.eau_poele && a.eau_poele.conseil ? inter("eau", "Régler l'eau du poêle") : ""}</div>
         ${this._eau(a)}
+        ${this._commandes(a)}
         ${this._arret(a)}
         <details ${ouvert}><summary>Garde-fous actifs</summary><ul>
           <li>Allumage automatique autorisé entre ${esc(gf.fenetre)}</li><li>Allumages automatiques aujourd'hui : ${gf.allumages_aujourdhui} / ${gf.max_allumages}</li>
@@ -340,6 +351,7 @@ class PilotagePoeleCard extends HTMLElement {
     </ha-card>`;
     this._monterPlanning(a);
     r.getElementById("dpieces")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { pieces: e.target.open }); });
+    r.getElementById("djournal")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { journal: e.target.open }); });
     r.getElementById("dsynth")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { synthese: e.target.open }); });
     r.getElementById("allumer")?.addEventListener("click", () => this._appel("button", "press", b.allumer));
     r.getElementById("annuler")?.addEventListener("click", () => this._appel("button", "press", b.annuler));

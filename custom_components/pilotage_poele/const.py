@@ -1,7 +1,7 @@
 """Constantes de l'intégration Pilotage poêle."""
 DOMAIN = "pilotage_poele"
 SUBENTRY_PIECE = "piece"
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 URL_CARTE = "/pilotage_poele/pilotage-poele-card.js"
 
 # configuration principale
@@ -44,6 +44,7 @@ OPTIONS_DEFAUT = {
 
 TICK_S = 60
 ECHANTILLON_S = 300
+COMMANDES_MAX = 40             # ordres gardés dans le journal des commandes
 EAU_PAS_MAX = 5.0             # °C maximum par changement de consigne d'eau
 EAU_INTERVALLE_S = 1800      # 30 min minimum entre deux changements
 EAU_MAX_PAR_JOUR = 6
