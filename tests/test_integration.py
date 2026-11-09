@@ -384,6 +384,9 @@ async def test_decision_par_zone_moyenne(hass, freezer):
     assert not (p.plan and p.plan.immediat)                      # moyenne 20,65 ≥ 20,5 : rien à faire
     z = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["zones"]["maison"]
     assert z["moyenne"] == 20.65 and len(z["pieces_temp"]) == 2
+    cond = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["arret"]["conditions"]
+    lignes = next(c for c in cond if c["id"] == "pieces")["pieces"]
+    assert len(lignes) == 1 and "Zone Maison" in lignes[0]["nom"] and lignes[0]["temperature"] == 20.65
     hass.config_entries.async_update_entry(entry, options={**entry.options, "decision_zone": False})
     await hass.async_block_till_done()
     p = entry.runtime_data

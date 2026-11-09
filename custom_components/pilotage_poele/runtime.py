@@ -745,6 +745,17 @@ class Pilote:
             pieces.append({"nom": m.nom, "temperature": round(m.temperature, 2), "requis": round(cible + hyst, 2),
                            "ok": m.temperature >= cible + hyst, "anticipe": cible < m.cible})
         pieces_ok = bool(pieces) and all(p["ok"] for p in pieces)
+        zone_de = {m.nom: (m.zone, m.nb_zone) for m in mesurables if m.zone}
+        vues: set[str] = set()
+        groupees = []
+        for p in pieces:                       # une seule ligne par zone décidée sur sa moyenne
+            z = zone_de.get(p["nom"])
+            if z is None:
+                groupees.append(p)
+            elif z[0] not in vues:
+                vues.add(z[0])
+                groupees.append({**p, "nom": f"Zone {z[0]} (moyenne de {z[1]} pièces)"})
+        pieces = groupees
         stable = (ts - self._stable_depuis) if (self._stable_depuis and pieces_ok) else 0.0
         off_recent = self._off_recent(ts)
         duree_ok = t_marche is not None and t_marche >= marche_min * 60
