@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.data_entry_flow import FlowResultType
@@ -655,21 +656,19 @@ async def test_eau_sans_capteur_exterieur_pas_de_conseil(hass, freezer):
     assert hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["eau_poele"]["conseil"] is None
 
 
-async def test_eau_envoi_par_pas_avec_verification(hass, freezer):
-    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
+async def test_eau_envoi_sans_lire_le_poele(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
     entry = await _ext(hass, entry, 0.0)                         # courbe : 70 °C
-    _poele_eau(hass, 62)
+    _poele_eau(hass, 25)                                         # l'entité renvoie n'importe quoi : sans effet
     envois = async_mock_service(hass, "climate", "set_temperature")
     await bascule(hass, entry, "eau")
     await avancer(hass, freezer, entry, 1)
-    assert [a.data["temperature"] for a in envois] == [67]       # 62 → 70 limité à 5 °C par changement
-    _poele_eau(hass, 67)
-    await avancer(hass, freezer, entry, 2)                       # relecture : confirmé
-    assert entry.runtime_data.eau_envoi["verifie"] and entry.runtime_data.eau_envoi["erreur"] is None
-    await avancer(hass, freezer, entry, 10)
-    assert len(envois) == 1                                      # 30 min minimum entre deux changements
-    await avancer(hass, freezer, entry, 25)
-    assert [a.data["temperature"] for a in envois] == [67, 70]
+    assert [a.data["temperature"] for a in envois] == [70]       # envoi direct de la valeur conseillée
+    for _ in range(4):
+        await avancer(hass, freezer, entry, 35)
+    assert len(envois) == 1                                      # la valeur conseillée n'a pas changé : rien de plus
+    assert not [c for c in entry.runtime_data.commandes if c["source"] == "externe"]
+    assert not any("sans que le pilotage" in a.data["message"] for a in appels["notif"])
 
 
 async def test_eau_rien_en_mode_conseil_ou_hors_marche(hass, freezer):
@@ -691,16 +690,14 @@ async def test_eau_desactivee_apres_trois_refus(hass, freezer):
     entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
     entry = await _ext(hass, entry, 0.0)
     _poele_eau(hass, 62)
-    envois = async_mock_service(hass, "climate", "set_temperature")
+    envois = async_mock_service(hass, "climate", "set_temperature", raise_exception=HomeAssistantError("refusé"))
     await bascule(hass, entry, "eau")
     for _ in range(3):
-        await avancer(hass, freezer, entry, 1)                   # envoi
-        await avancer(hass, freezer, entry, 2)                   # relecture : la consigne n'a pas bougé
-        await avancer(hass, freezer, entry, 30)
+        await avancer(hass, freezer, entry, 1)                   # envoi refusé
+        await avancer(hass, freezer, entry, 35)                  # nouvel essai 30 min plus tard, sans insister
     assert len(envois) == 3
     assert hass.states.get(eid(hass, entry, "switch", "eau")).state == "off"
     assert any("désactivé" in a.data["message"] for a in appels["notif"])
-
 
 
 # ---------- estimation sans planning : la pièce va passer sous son seuil ----------
@@ -745,18 +742,6 @@ async def test_aucune_consigne_message_clair(hass, freezer):
 
 
 # ---------- journal des commandes, correction directe, consigne étrangère ----------
-async def test_eau_hors_limites_corrigee_d_un_coup(hass, freezer):
-    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
-    entry = await _ext(hass, entry, 0.0)                         # courbe : 70 °C
-    _poele_eau(hass, 25)                                         # valeur aberrante
-    envois = async_mock_service(hass, "climate", "set_temperature")
-    await bascule(hass, entry, "eau")
-    await avancer(hass, freezer, entry, 1)
-    assert [a.data["temperature"] for a in envois] == [70]       # retour direct, pas 30 puis 35...
-    c = entry.runtime_data.commandes[-1]
-    assert c["source"] == "eau" and "correction" in c["raison"] and c["valeur"] == 70
-
-
 async def test_journal_des_commandes(hass, freezer):
     hass.states.async_set(TETE1, "heat", {})
     entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="20.0", zone="chambre")
@@ -768,16 +753,3 @@ async def test_journal_des_commandes(hass, freezer):
     assert [c["source"] for c in j][:2] == ["force", "tetes"] or {c["source"] for c in j} >= {"force", "tetes"}
     assert j[0]["service"] == "turn_on" and j[0]["entite"] == POELE                 # le plus récent d'abord
     assert any(c["entite"] == TETE1 and c["valeur"] == 20.5 for c in j)
-
-
-async def test_consigne_etrangere_signalee(hass, freezer):
-    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="22.5")
-    _poele_eau(hass, 62, statut="Off")
-    await avancer(hass, freezer, entry, 2)                       # référence : 62 °C
-    hass.states.async_set(POELE, "off", {"hvac_action": "off", "temperature": 25, "min_temp": 50, "max_temp": 80})
-    await avancer(hass, freezer, entry, 2)
-    ext = [c for c in entry.runtime_data.commandes if c["source"] == "externe"]
-    assert len(ext) == 1 and ext[0]["valeur"] == 25
-    assert any("sans que le pilotage" in a.data["message"] for a in appels["notif"])
-    await avancer(hass, freezer, entry, 5)
-    assert len([c for c in entry.runtime_data.commandes if c["source"] == "externe"]) == 1   # pas de répétition

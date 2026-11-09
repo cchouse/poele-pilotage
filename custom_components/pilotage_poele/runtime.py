@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_CIBLE, CONF_ECART, CONF_EAU, CONF_EXTERIEUR, CONF_NOTIF, CONF_POELE, CONF_STATUT, CONF_TEMPERATURE, CONF_ZONE,
-    COMMANDES_MAX, DOMAIN, EAU_ECART_MIN, EAU_INTERVALLE_S, EAU_MAX_PAR_JOUR, EAU_PAS_MAX, ECHANTILLON_S, GRACE_FIN_CYCLE_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
+    COMMANDES_MAX, DOMAIN, EAU_ECART_MIN, EAU_INTERVALLE_S, EAU_MAX_PAR_JOUR, ECHANTILLON_S, GRACE_FIN_CYCLE_S, HISTO_MAX, JOURNAL_MAX, OPTIONS_DEFAUT, TICK_S,
 )
 from .model import (
     ETATS, ETATS_LIBELLES, Appris, Params, PieceMesure, Plan, amorcer_depuis_historique, classer, echeances,
@@ -77,7 +77,6 @@ class Pilote:
         self.autorisation: tuple[bool, str] = (False, "")
         self.derniere_action: dict[str, Any] | None = None
         self.commandes: list[dict[str, Any]] = []       # journal de tout ce que j'envoie au poêle et aux têtes
-        self._eau_vue: float | None = None             # dernière consigne du poêle observée (détection d'une valeur étrangère)
         self.echantillons: dict[str, list[tuple[float, float]]] = {}
         self._froid_appris_pour: float | None = None
         self._cmd_off_ts: float | None = None
@@ -379,80 +378,42 @@ class Pilote:
         return {"c": c, "base": round(base, 1), "ajust": aj, "raison": raison + ".", "min": lo, "max": hi}
 
     async def _regler_eau(self, now: datetime, ts: float) -> None:
-        """Envoie la consigne d'eau au poêle, par petits pas et seulement pendant la marche. Désactivé par défaut."""
-        poele = self.cfg[CONF_POELE]
-        e = self.eau_envoi
-        if e and not e.get("verifie") and ts - e["ts"] >= 90:        # le poêle a-t-il bien pris la consigne ?
-            st = self.hass.states.get(poele)
-            cur = None if st is None else st.attributes.get("temperature")
-            if isinstance(cur, (int, float)) and abs(float(cur) - e["c"]) <= 0.6:
-                e["verifie"], e["erreur"], self._eau_echecs = True, None, 0
-            else:
-                e["verifie"], e["erreur"] = True, "le poêle n'a pas pris la consigne"
-                self._eau_echecs += 1
-                if self._eau_echecs >= 3:
-                    self.drapeaux["eau"] = False
-                    self._sauver()
-                    await self._notifier("Poêle : le réglage automatique de l'eau est désactivé, le poêle n'a pas pris "
-                                         "la consigne 3 fois de suite. Vérifiez son entité.")
-        await self._surveiller_consigne_eau(ts)
+        """Envoie la consigne d'eau conseillée au poêle pendant la marche. Désactivé par défaut.
+        Je ne lis jamais la consigne du poêle pour décider : je compare avec la dernière valeur que j'ai moi-même
+        envoyée, ce qui rend le réglage insensible aux coupures de l'entité (cloud indisponible, valeur par défaut...)."""
         if not self.drapeaux.get("eau") or self.eau_info is None or self.etat != "marche":
             return
-        st = self.hass.states.get(poele)
-        cur = None if st is None else st.attributes.get("temperature")
-        if not isinstance(cur, (int, float)):
-            return
-        cur = float(cur)
+        e = self.eau_envoi
         lo, hi = self._bornes_eau()
-        cible = float(self.eau_info["c"])
-        hors_limites = not lo <= cur <= hi
-        if not hors_limites and abs(cible - cur) < EAU_ECART_MIN:
-            return
-        if e and ts - e["ts"] < (300 if hors_limites else EAU_INTERVALLE_S):
-            return
+        nouveau = round(min(hi, max(lo, float(self.eau_info["c"]))))
+        if e and not e.get("erreur") and abs(nouveau - float(e["c"])) < EAU_ECART_MIN:
+            return                                       # la valeur conseillée n'a pas assez changé depuis mon dernier envoi
+        if e and ts - e["ts"] < EAU_INTERVALLE_S:
+            return                                       # au plus un envoi toutes les 30 min (aussi après un échec)
         self.eau_changes = [t for t in self.eau_changes if t > ts - 86400]
         if len(self.eau_changes) >= EAU_MAX_PAR_JOUR:
             return
-        if hors_limites:                               # valeur aberrante : retour direct à la consigne conseillée
-            nouveau = round(min(hi, max(lo, cible)))
-        else:
-            nouveau = round(min(hi, max(lo, cur + max(-EAU_PAS_MAX, min(EAU_PAS_MAX, cible - cur)))))
-        if nouveau == round(cur):
-            return
-        raison = (f"correction : consigne de {round(cur)} °C hors des limites {round(lo)}–{round(hi)} °C" if hors_limites
-                  else f"loi d'eau : {round(cur)} → {nouveau} °C")
+        poele = self.cfg[CONF_POELE]
+        avant = None if not e else e["c"]
+        raison = f"loi d'eau : {'première consigne' if avant is None else f'{round(avant)} →'} {nouveau} °C".replace("première consigne", "consigne")
         try:
             async with asyncio.timeout(20):
                 await self.hass.services.async_call("climate", "set_temperature",
                                                     {"entity_id": poele, "temperature": nouveau}, blocking=True)
-            self.eau_envoi = {"c": nouveau, "ts": ts, "verifie": False, "erreur": None, "avant": cur}
+            self.eau_envoi = {"c": nouveau, "ts": ts, "verifie": True, "erreur": None, "avant": avant}
             self._noter_commande(poele, "set_temperature", "eau", nouveau, raison)
+            self._eau_echecs = 0
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Pilotage poêle : consigne d'eau refusée : %s", err)
-            self.eau_envoi = {"c": nouveau, "ts": ts, "verifie": True, "erreur": str(err), "avant": cur}
+            self.eau_envoi = {"c": avant if avant is not None else nouveau, "ts": ts, "verifie": True, "erreur": str(err), "avant": avant}
             self._noter_commande(poele, "set_temperature", "eau", nouveau, raison, str(err))
             self._eau_echecs += 1
+            if self._eau_echecs >= 3:
+                self.drapeaux["eau"] = False
+                await self._notifier("Poêle : le réglage automatique de l'eau est désactivé, la consigne a été refusée "
+                                     "3 fois de suite. Vérifiez l'entité du poêle.")
         self.eau_changes.append(ts)
         self._sauver()
-
-    async def _surveiller_consigne_eau(self, ts: float) -> None:
-        """Signale une consigne du poêle qui saute hors des limites sans que je l'aie envoyée."""
-        st = self.hass.states.get(self.cfg[CONF_POELE])
-        cur = None if st is None else st.attributes.get("temperature")
-        if not isinstance(cur, (int, float)):
-            return
-        cur = float(cur)
-        avant, self._eau_vue = self._eau_vue, cur
-        if avant is None or cur == avant:
-            return
-        lo, hi = self._bornes_eau()
-        envoye = self.eau_envoi and abs(self.eau_envoi["c"] - cur) < 0.6 and ts - self.eau_envoi["ts"] < 600
-        if lo <= avant <= hi and not lo <= cur <= hi and not envoye:
-            self._noter_commande(self.cfg[CONF_POELE], "set_temperature", "externe", cur,
-                                 f"consigne reçue d'ailleurs, hors des limites {round(lo)}–{round(hi)} °C")
-            await self._notifier(f"Poêle : la consigne est passée de {_v(avant, 0)} à {_v(cur, 0)} °C sans que le pilotage "
-                                 f"poêle l'ait envoyée (limites {round(lo)}–{round(hi)} °C). Origine à chercher : programmation "
-                                 "du poêle ou de l'application Duepi, automatisation, autre intégration.")
 
     # ---------- têtes thermostatiques ----------
     def _tetes_zone(self, zone: str) -> list[str]:

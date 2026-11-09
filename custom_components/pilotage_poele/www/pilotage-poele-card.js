@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.9.1";
+const VERSION = "0.9.2";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -133,8 +133,8 @@ class PilotagePoeleCard extends HTMLElement {
     const e = a.eau_poele || {}; const c = e.conseil;
     if (!c) return `<div class="sec"><h3>Eau du poêle</h3><p class="petit">Pas de capteur extérieur : je ne peux pas calculer l'eau conseillée (ajoutez-le dans « Reconfigurer »).</p></div>`;
     const d = e.dernier;
-    const etat = e.actif ? `Réglage automatique actif : par pas de 5 °C au plus, pendant la marche, 6 changements par jour au plus (${e.changements_24h} sur 24 h), entre ${fmt(c.min, 0)} et ${fmt(c.max, 0)} °C.` : "Mode conseil : rien n'est envoyé au poêle.";
-    const der = d ? `<p class="petit">Dernier réglage : ${hhmm(d.ts)} → ${fmt(d.c, 0)} °C${d.erreur ? ` — ⚠ ${esc(d.erreur)}` : d.verifie ? " (confirmé par le poêle)" : " (vérification en cours)"}.</p>` : "";
+    const etat = e.actif ? `Réglage automatique actif : valeur conseillée envoyée pendant la marche, sans relire la consigne du poêle, 30 min minimum entre deux envois, 6 par jour au plus (${e.changements_24h} sur 24 h), entre ${fmt(c.min, 0)} et ${fmt(c.max, 0)} °C.` : "Mode conseil : rien n'est envoyé au poêle.";
+    const der = d ? `<p class="petit">Dernier réglage : ${hhmm(d.ts)} → ${fmt(d.c, 0)} °C${d.erreur ? ` — ⚠ ${esc(d.erreur)}` : " (envoyé)"}.</p>` : "";
     return `<div class="sec"><h3>Eau du poêle : ${fmt(c.c, 0)} °C conseillée</h3>
       <p class="petit">Actuellement ${e.actuelle == null ? "–" : fmt(e.actuelle, 0) + " °C"}. ${esc(c.raison)}</p>
       <p class="petit">${etat}</p>${der}</div>`;

@@ -1,4 +1,4 @@
-# Pilotage poêle (Home Assistant) — version 0.9.1
+# Pilotage poêle (Home Assistant) — version 0.9.2
 
 Calcule **quand allumer** le poêle à granulés pour que les pièces soient à la bonne température à l'heure voulue, apprend les inerties de la maison, et explique chaque décision. Par défaut : **mode conseil**, rien n'est envoyé au poêle.
 
@@ -60,6 +60,9 @@ Dans une zone **sans planning**, la consigne réglée (boutons +/− ou entité 
 ## Décision par zone (0.9)
 Option « Décider par zone plutôt que par pièce » (⚙ Configurer, **activée par défaut**). Pour chaque zone (Chambre, Maison) ayant au moins 2 pièces, la température retenue est la **moyenne simple des sondes** de ses pièces, comparée à la consigne de la zone : une pièce qui perd quelques dixièmes ne déclenche plus rien tant que la moyenne tient. Les pièces sans zone restent traitées une par une. L'apprentissage, l'historique et les courbes continuent d'utiliser les vraies sondes. La carte affiche la moyenne de chaque zone avec un menu déroulant montrant chaque pièce. Désactivez l'option pour retrouver l'ancien comportement.
 
+## Consigne d'eau sans lecture du poêle (0.9.2)
+Le réglage de l'eau ne lit **plus jamais** la consigne du poêle pour décider (une coupure du cloud peut renvoyer une valeur par défaut, par exemple 25 °C). L'intégration calcule la consigne conseillée (limites min/max), l'envoie si elle diffère d'au moins 2 °C de **sa dernière valeur envoyée** (gardée en mémoire), au plus toutes les 30 min et 6 fois par jour, uniquement pendant la marche. Un envoi refusé est retenté 30 min plus tard ; après 3 refus de suite, le réglage se désactive. La détection de « consigne étrangère » et la vérification par relecture sont supprimées. Le journal des commandes reste.
+
 ## Comment ça décide
 Heure d'allumage = échéance − (délai d'allumage + latence + besoin ÷ vitesse de montée de la pièce la plus lente) × marge. Délai d'allumage et vitesse de montée de chaque pièce sont **appris** à chaque cycle ; tant qu'ils ne le sont pas, des valeurs par défaut prudentes sont utilisées et signalées comme telles.
 
@@ -68,6 +71,6 @@ Désactivé par défaut (interrupteur « Allumage automatique »). Il n'allume q
 L'arrêt automatique est un interrupteur séparé, désactivé par défaut.
 
 ## Limites de cette version
-- Testée en simulation (74 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
+- Testée en simulation (72 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
 - N'agit que par marche/arrêt du poêle (allumage avec sa puissance et sa consigne par défaut). La consigne d'eau peut être réglée automatiquement (loi d'eau, 0.7), mais cette fonction est désactivée par défaut et n'a jamais été essayée sur un vrai poêle.
 - Un poêle ne devrait jamais dépendre d'un seul logiciel : gardez ses sécurités propres et vérifiez avec votre assurance/installateur.
