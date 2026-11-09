@@ -1,4 +1,4 @@
-# Pilotage poêle (Home Assistant) — version 0.9.3
+# Pilotage poêle (Home Assistant) — version 1.0.0
 
 Calcule **quand allumer** le poêle à granulés pour que les pièces soient à la bonne température à l'heure voulue, apprend les inerties de la maison, et explique chaque décision. Par défaut : **mode conseil**, rien n'est envoyé au poêle.
 
@@ -63,7 +63,7 @@ Option « Décider par zone plutôt que par pièce » (⚙ Configurer, **activé
 ## Consigne d'eau sans lecture du poêle (0.9.2)
 Le réglage de l'eau ne lit **plus jamais** la consigne du poêle pour décider (une coupure du cloud peut renvoyer une valeur par défaut, par exemple 25 °C). L'intégration calcule la consigne conseillée (limites min/max), l'envoie si elle diffère d'au moins 2 °C de **sa dernière valeur envoyée** (gardée en mémoire), au plus toutes les 30 min et 6 fois par jour, uniquement pendant la marche. Un envoi refusé est retenté 30 min plus tard ; après 3 refus de suite, le réglage se désactive. La détection de « consigne étrangère » et la vérification par relecture sont supprimées. Le journal des commandes reste.
 
-## Arrêt si l'eau est trop chaude (0.9.3)
+## Arrêt si l'eau est trop chaude (1.0)
 Option « Arrêt si l'eau dépasse la consigne d'eau de (°C) » (0 = désactivé, par défaut). Si l'eau mesurée (capteur d'eau configuré) reste au moins cet écart au-dessus de la consigne d'eau pendant 3 min, le poêle est éteint (notification + journal, origine « eau trop chaude »). Consigne de référence : ma dernière valeur envoyée si le réglage de l'eau est actif, sinon celle du poêle, ignorée si elle sort des limites min/max (valeur aberrante).
 
 ## Comment ça décide
