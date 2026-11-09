@@ -371,6 +371,26 @@ async def test_consigne_sans_planning_reste_sans_limite(hass, freezer):
     assert not p.derogations
 
 
+async def test_decision_par_zone_moyenne(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.8", zone="maison")
+    hass.states.async_set("sensor.salon_t", "21.5")
+    r = await hass.config_entries.subentries.async_init((entry.entry_id, SUBENTRY_PIECE), context={"source": SOURCE_USER})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"name": "Salon", CONF_TEMPERATURE: "sensor.salon_t", "zone": "maison"})
+    assert r["type"] is FlowResultType.CREATE_ENTRY, r
+    await hass.async_block_till_done()
+    await _planning(hass, zone="maison", planning={str(j): [{"h": "00:00", "c": 20.5}] for j in range(7)})
+    p = entry.runtime_data
+    await avancer(hass, freezer, entry, 1)
+    assert not (p.plan and p.plan.immediat)                      # moyenne 20,65 ≥ 20,5 : rien à faire
+    z = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["zones"]["maison"]
+    assert z["moyenne"] == 20.65 and len(z["pieces_temp"]) == 2
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "decision_zone": False})
+    await hass.async_block_till_done()
+    p = entry.runtime_data
+    await avancer(hass, freezer, entry, 1)
+    assert p.plan and p.plan.immediat                            # pièce par pièce : la Chambre manque 0,7 °C
+
+
 async def test_allumage_automatique_immediat(hass, freezer):
     entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.0", zone="chambre")
     await _planning(hass)

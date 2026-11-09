@@ -89,6 +89,7 @@ def _schema_options(d: dict[str, Any]) -> vol.Schema:
         vol.Required("arret_min", default=d["arret_min"]): num(0, 240, 5, "min"),
         vol.Required("marge", default=d["marge"]): num(1.0, 2.0, 0.05),
         vol.Required("hysteresis", default=d["hysteresis"]): num(0, 2, 0.1, "°C"),
+        vol.Required("decision_zone", default=d["decision_zone"]): selector.BooleanSelector(),
         vol.Required("immediat_actif", default=d["immediat_actif"]): selector.BooleanSelector(),
         vol.Required("seuil_immediat", default=d["seuil_immediat"]): num(0.2, 3, 0.1, "°C"),
         vol.Optional("tetes_chambre", description={"suggested_value": d.get("tetes_chambre") or []}): selector.EntitySelector(

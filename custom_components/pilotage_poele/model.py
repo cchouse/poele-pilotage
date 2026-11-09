@@ -208,6 +208,8 @@ class PieceMesure:
     nom: str
     temperature: float | None
     cible: float | None
+    zone: str | None = None          # nom de la zone quand la température est la moyenne de la zone
+    nb_zone: int = 0
 
 
 @dataclass

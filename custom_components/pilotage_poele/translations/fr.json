@@ -46,6 +46,7 @@
      "arret_min": "Attente minimale entre deux allumages (min)",
      "marge": "Marge de prudence (1,25 = +25 %)",
      "hysteresis": "Marge au-dessus de la température visée pour l'arrêt (°C)",
+     "decision_zone": "Décider par zone plutôt que par pièce (moyenne des sondes de la zone)",
      "immediat_actif": "Allumage conseillé dès que la pièce est sous la consigne en cours",
      "seuil_immediat": "Écart sous la consigne qui déclenche (°C)",
      "tetes_chambre": "Têtes thermostatiques de la zone Chambre",

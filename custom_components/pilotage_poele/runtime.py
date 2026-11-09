@@ -226,15 +226,29 @@ class Pilote:
             return None if r is None else r[0]
         return _float(self.hass, c.get(CONF_CIBLE))
 
-    def _mesures(self, quand: datetime | None = None, garder: Callable[[dict[str, Any]], bool] | None = None) -> list[PieceMesure]:
+    def _mesures(self, quand: datetime | None = None, garder: Callable[[dict[str, Any]], bool] | None = None,
+                 brut: bool = False) -> list[PieceMesure]:
+        """Mesures des pièces. Avec « décider par zone » (sauf brut=True), les pièces d'une zone active
+        partagent la moyenne des sondes de leur zone : c'est elle qui est comparée à la consigne de la zone."""
         quand = quand or dt_util.now()
         out = []
+        zones: dict[str, list[float]] = {}
+        zone_de: dict[str, str] = {}
         for nom, c in self.pieces_cfg():
             cible = self._cible_piece(c, quand)
             if garder is not None and not garder(c):
                 cible = None
-            out.append(PieceMesure(nom, _float(self.hass, c.get(CONF_TEMPERATURE)), cible))
-        return out
+            t = _float(self.hass, c.get(CONF_TEMPERATURE))
+            out.append(PieceMesure(nom, t, cible))
+            z = c.get(CONF_ZONE)
+            if t is not None and self._zone_active(z, quand):
+                zones.setdefault(z, []).append(t)
+                zone_de[nom] = z
+        if brut or not self.opt.get("decision_zone", True):
+            return out
+        moy = {z: sum(v) / len(v) for z, v in zones.items() if len(v) >= 2}
+        return [replace(m, temperature=moy[zone_de[m.nom]], zone=ZONES[zone_de[m.nom]], nb_zone=len(zones[zone_de[m.nom]]))
+                if m.nom in zone_de and zone_de[m.nom] in moy else m for m in out]
 
     def _piece_classique(self, c: dict[str, Any], now: datetime) -> bool:
         """Pièce suivie par les échéances fixes du matin et du soir (pas de planning de zone)."""
@@ -294,28 +308,29 @@ class Pilote:
         for z in [z for z, d in self.derogations.items() if not self._derogation_active(d, ts)]:
             self.derogations.pop(z)            # dérogation terminée : retour au planning
             self._sauver()
-        mesures = self._mesures()
+        brut = self._mesures(brut=True)            # sondes réelles : échantillons, historique, apprentissage
+        mesures = self._mesures()                  # décisions : moyennes de zone si l'option est active
         # échantillons pour l'apprentissage et l'historique
         if ts - self._dernier_echantillon >= ECHANTILLON_S:
             self._dernier_echantillon = ts
-            for m in mesures:
+            for m in brut:
                 if m.temperature is not None:
                     self.echantillons.setdefault(m.nom, []).append((ts, m.temperature))
                     self.echantillons[m.nom] = [e for e in self.echantillons[m.nom] if e[0] > ts - 43200]
             self.historique.append([int(ts), ETATS.index(self.etat), _float(self.hass, self.cfg.get(CONF_EAU)),
                                     _float(self.hass, self.cfg.get(CONF_EXTERIEUR)),
-                                    [None if m.temperature is None else round(m.temperature, 2) for m in mesures]])
+                                    [None if m.temperature is None else round(m.temperature, 2) for m in brut]])
             self.historique = self.historique[-HISTO_MAX:]
             self._sauver()
         # état du poêle et transitions
         nouveau = self._lire_etat()
         if nouveau != self.etat:
-            await self._transition(self.etat, nouveau, ts, mesures)
+            await self._transition(self.etat, nouveau, ts, brut)
             self.etat = nouveau
         if self.run and self.run.get("sorti") and self.etat in ("arret", "extinction") \
                 and ts - self.run["sorti"] >= GRACE_FIN_CYCLE_S:
-            self._terminer_run(self.run["sorti"], mesures)   # vraie fin : le poêle n'est pas revenu en marche
-        self._apprendre_refroidissement(ts, mesures)
+            self._terminer_run(self.run["sorti"], brut)   # vraie fin : le poêle n'est pas revenu en marche
+        self._apprendre_refroidissement(ts, brut)
         # sécurités d'abord (elles peuvent verrouiller), puis plan, garde-fous et décision
         await self._securites(now, ts, mesures)
         self.plan = self._calculer_plan(now, mesures)
@@ -499,6 +514,19 @@ class Pilote:
         return h
 
     def _calculer_plan(self, now: datetime, mesures: list[PieceMesure], avec_immediat: bool = True) -> Plan | None:
+        plan = self._calculer_plan_interne(now, mesures, avec_immediat)
+        if plan is None or not plan.limitante:
+            return plan
+        m = next((x for x in mesures if x.nom == plan.limitante and x.zone), None)
+        if m is None:
+            return plan
+        lib = f"la zone « {m.zone} » (moyenne de {m.nb_zone} pièces)"
+        raison = (plan.raison or "").replace(f"prévu. « {m.nom} »", f"prévu. La zone « {m.zone} » (moyenne de {m.nb_zone} pièces)") \
+            .replace(f"« {m.nom} »", lib)
+        pieces = [dict(d, libelle=f"Zone {m.zone}") if d.get("nom") == m.nom else d for d in (plan.pieces or [])]
+        return replace(plan, raison=raison, pieces=pieces)
+
+    def _calculer_plan_interne(self, now: datetime, mesures: list[PieceMesure], avec_immediat: bool = True) -> Plan | None:
         marge = float(self.opt["marge"])
         marche = self.etat in ("allumage", "marche")
         # 1. besoin immédiat : une pièce est nettement sous la consigne en cours
@@ -847,8 +875,16 @@ class Pilote:
                 "planning": self.planning.get(z, {}),
                 "derogation": None if not der or not self._derogation_active(der, ts) else {"c": der["c"], "jusqu": None if der.get("jusqu") is None else int(der["jusqu"])},
                 "pieces": [n for n, c in self.pieces_cfg() if c.get(CONF_ZONE) == z],
+                "pieces_temp": [{"nom": n, "temperature": _float(self.hass, c.get(CONF_TEMPERATURE))}
+                                for n, c in self.pieces_cfg() if c.get(CONF_ZONE) == z],
+                "moyenne": self._moyenne_zone(z),
             }
         return out
+
+    def _moyenne_zone(self, zone: str) -> float | None:
+        t = [_float(self.hass, c.get(CONF_TEMPERATURE)) for _, c in self.pieces_cfg() if c.get(CONF_ZONE) == zone]
+        t = [v for v in t if v is not None]
+        return round(sum(t) / len(t), 2) if t else None
 
     def _pieces_etat(self, now: datetime) -> list[dict[str, Any]]:
         """Toutes les pièces, y compris celles que l'objectif en cours ne concerne pas."""
@@ -932,7 +968,8 @@ class Pilote:
             "arret": self.conditions_arret(now.timestamp(), self._mesures()),
             "zones": self._zones_snapshot(now),
             "pieces_etat": self._pieces_etat(now),
-            "synthese": self._synthese(now, self._mesures()),
+            "synthese": self._synthese(now, self._mesures(brut=True)),
+            "decision_zone": bool(self.opt.get("decision_zone", True)),
             "eau_poele": self._eau_snapshot(),
             "commandes": list(reversed(self.commandes[-15:])),
             "tetes": {"actif": bool(self.drapeaux.get("tetes", True)), "decalage": float(self.opt["tetes_decalage"]),

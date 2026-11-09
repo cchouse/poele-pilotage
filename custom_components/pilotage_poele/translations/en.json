@@ -46,6 +46,7 @@
      "arret_min": "Attente minimale entre deux allumages (min)",
      "marge": "Marge de prudence (1,25 = +25 %)",
      "hysteresis": "Écart au-dessus de la cible pour l'arrêt (°C)",
+     "decision_zone": "Decide per zone instead of per room (average of the zone's sensors)",
      "immediat_actif": "Advise lighting as soon as a room is below the current setpoint",
      "seuil_immediat": "Gap below setpoint that triggers (°C)",
      "tetes_chambre": "Radiator valves of the Bedroom zone",

@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.8.3";
+const VERSION = "0.9.0";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -47,6 +47,7 @@ summary { min-height:48px; display:flex; align-items:center; cursor:pointer; fon
 details p, details ul { margin:0 0 12px; font-size:.9rem; color:var(--primary-text-color); line-height:1.5; }
 ha-card { display:block; container-type:inline-size; }
 ul.liste { margin:6px 0; padding-left:18px; font-size:.85rem; line-height:1.4; } ul.liste li { margin-bottom:4px; }
+details.zone > summary { display:block; cursor:pointer; list-style:none; padding:0; } details.zone > summary::-webkit-details-marker { display:none; } details.zone > summary .l1 > span:first-child::before { content:"▸ "; } details.zone[open] > summary .l1 > span:first-child::before { content:"▾ "; }
 .synth { margin:0 0 14px; } .synth > summary { font-size:.95rem; }
 .tuiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:4px; }
 .tuile { border:1px solid var(--divider-color); border-radius:10px; padding:10px 12px; min-width:0; }
@@ -305,7 +306,12 @@ class PilotagePoeleCard extends HTMLElement {
        <div class="l2">${etat}${x.zone ? " · zone " + esc(x.zone) : ""} · ${quoi}</div></div>`;
     };
     const ordre = toutes.length ? [...toutes.filter((x) => concernees.has(x.nom)).sort((u, v) => concernees.get(u.nom)[1] - concernees.get(v.nom)[1]), ...toutes.filter((x) => !concernees.has(x.nom))] : [];
-    const piecesHtml = ordre.map(ligne).join("") || `<div class="vide">Aucune pièce configurée.</div>`;
+    const zonesHtml = a.decision_zone ? Object.entries(a.zones || {}).filter(([, z]) => z.pieces_temp && z.pieces_temp.length >= 2 && z.moyenne != null && z.consigne != null).map(([k, z]) => {
+      const man = z.consigne - z.moyenne; const ouv = this._ouv && this._ouv["z_" + k] ? "open" : "";
+      return `<details class="piece zone" data-zk="${esc(k)}" ${ouv}><summary><div class="l1"><span><b>${esc(z.nom)}</b> · moyenne</span><span>${fmt(z.moyenne)} → ${fmt(z.consigne)} °C</span></div>
+        <div class="l2">${man > 0.05 ? `manque ${fmt(man)} °C` : "à la consigne"} · ${z.pieces_temp.length} pièces · décision par zone</div></summary>
+        ${z.pieces_temp.map((x) => `<div class="l2" style="display:flex;justify-content:space-between;padding:2px 0 2px 12px"><span>${esc(x.nom)}</span><span>${fmt(x.temperature)} °C</span></div>`).join("")}</details>`; }).join("") : "";
+    const piecesHtml = zonesHtml + ordre.map(ligne).join("") || `<div class="vide">Aucune pièce configurée.</div>`;
     const piecesOuvert = this._ouv && this._ouv.pieces === false ? "" : "open";
     const piecesTitre = p && p.besoin && concernees.size > 1 ? "Les pièces (la plus lente décide)" : "Les pièces";
     const piecesAppris = Object.entries(ap.pieces || {}).map(([n, v]) => `<li>${esc(n)} : ${v.appris ? `montée apprise sur ${v.n} chauffe${v.n > 1 ? "s" : ""} (${fmt(v.montee)} °C/h)${Object.keys(v.tranches || {}).length ? " · " + Object.entries(v.tranches).map(([t, n]) => `${t} ${n}`).join(", ") : ""}` : "pas encore apprise (valeur par défaut)"}${v.k_appris ? ` · refroidissement appris sur ${v.n_k} arrêt${v.n_k > 1 ? "s" : ""} : ${fmt(v.k * 10)} °C/h pour 10 °C d'écart` : v.refroid_ancien != null ? ` · ancien refroidissement mesuré sans l'extérieur (${fmt(v.refroid_ancien, 2)} °C/h), ignoré tant que le nouveau n'est pas appris` : " · refroidissement : valeur par défaut"}</li>`).join("");
@@ -350,6 +356,7 @@ class PilotagePoeleCard extends HTMLElement {
       </div>
     </ha-card>`;
     this._monterPlanning(a);
+    r.querySelectorAll("details.zone").forEach((d) => d.addEventListener("toggle", () => { this._ouv = Object.assign(this._ouv || {}, { ["z_" + d.dataset.zk]: d.open }); }));
     r.getElementById("dpieces")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { pieces: e.target.open }); });
     r.getElementById("djournal")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { journal: e.target.open }); });
     r.getElementById("dsynth")?.addEventListener("toggle", (e) => { this._ouv = Object.assign(this._ouv || {}, { synthese: e.target.open }); });
