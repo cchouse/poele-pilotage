@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.8.2";
+const VERSION = "0.8.3";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -184,7 +184,7 @@ class PilotagePoeleCard extends HTMLElement {
     const ed = this._ed; const z = zs[ed.zone]; const sale = !!ed.brouillon[ed.zone];
     const JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"], LONG = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
     const src = !z || z.consigne == null ? "aucune consigne : ajoutez des tranches ci-dessous"
-      : z.source === "derogation" ? `dérogation jusqu'à ${hhmm(z.derogation.jusqu)}` : "selon le planning";
+      : z.source === "derogation" ? (z.derogation.jusqu == null ? "consigne fixe, sans limite de durée" : `dérogation jusqu'à ${hhmm(z.derogation.jusqu)}`) : "selon le planning";
     const auj = ((z && z.planning) || {})[String((new Date().getDay() + 6) % 7)] || [];
     const tr = this._tranches();
     const lignes = tr.map((t, i) => `<div class="tr"><label>Heure<input type="time" data-i="${i}" data-k="h" value="${esc(t.h)}" aria-label="Heure de la tranche ${i + 1}"></label>
@@ -196,7 +196,7 @@ class PilotagePoeleCard extends HTMLElement {
       <div class="petit">${this._tetes(a, ed.zone)}</div>
       <div class="cons"><div><div class="petit">Consigne en cours (${src})</div><div class="val">${z && z.consigne != null ? fmt(z.consigne) + " °C" : "–"}</div></div>
         <div class="pm"><button class="pm1" id="moins" aria-label="Baisser la consigne de 0,5 degré">−</button><button class="pm1" id="plus" aria-label="Monter la consigne de 0,5 degré">+</button></div></div>
-      ${z && z.derogation ? `<button class="b" id="retour" style="width:100%;margin-top:6px">↩ Revenir au planning</button>` : ""}
+      ${z && z.derogation ? `<button class="b" id="retour" style="width:100%;margin-top:6px">${z.derogation.jusqu == null ? "✕ Effacer la consigne" : "↩ Revenir au planning"}</button>` : ""}
       <div class="petit" style="margin-top:6px">${z && z.prochain ? `Prochain changement : ${hhmm(z.prochain.ts)} → ${fmt(z.prochain.c)} °C.` : "Aucun changement prévu."} ${auj.length ? "Aujourd'hui : " + auj.map((t) => `${t.h} → ${fmt(t.c)} °C`).join(" · ") : ""}</div>
       <div class="petit">Un + ou − change la consigne jusqu'à la prochaine tranche, puis le planning reprend.</div>
       <details id="edd" ${ed.ouvert || sale ? "open" : ""}><summary>Modifier le planning de la zone ${esc(z ? z.nom : "")}</summary>

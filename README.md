@@ -1,4 +1,4 @@
-# Pilotage poêle (Home Assistant) — version 0.8.2
+# Pilotage poêle (Home Assistant) — version 0.8.3
 
 Calcule **quand allumer** le poêle à granulés pour que les pièces soient à la bonne température à l'heure voulue, apprend les inerties de la maison, et explique chaque décision. Par défaut : **mode conseil**, rien n'est envoyé au poêle.
 
@@ -54,6 +54,9 @@ Quand aucun changement de consigne n'est prévu, l'intégration estime quand cha
 - Si la consigne d'eau du poêle sort des limites (min/max configurés), elle est ramenée **directement** dans les limites (et non par paliers de 5 °C), au plus toutes les 5 min.
 - Si la consigne passe hors limites sans que l'intégration l'ait envoyée, une notification est envoyée et l'événement est inscrit au journal (origine « externe »).
 
+## Consigne sans planning (0.8.3)
+Dans une zone **sans planning**, la consigne réglée (boutons +/− ou entité « Consigne … ») reste en place **sans limite de durée** jusqu'à ce que vous la changiez ou l'effaciez (bouton « Effacer la consigne »). Avec un planning, elle s'arrête toujours à la prochaine tranche. Les anciennes dérogations de 12 h sans planning deviennent sans limite au démarrage.
+
 ## Comment ça décide
 Heure d'allumage = échéance − (délai d'allumage + latence + besoin ÷ vitesse de montée de la pièce la plus lente) × marge. Délai d'allumage et vitesse de montée de chaque pièce sont **appris** à chaque cycle ; tant qu'ils ne le sont pas, des valeurs par défaut prudentes sont utilisées et signalées comme telles.
 
@@ -62,6 +65,6 @@ Désactivé par défaut (interrupteur « Allumage automatique »). Il n'allume q
 L'arrêt automatique est un interrupteur séparé, désactivé par défaut.
 
 ## Limites de cette version
-- Testée en simulation (72 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
+- Testée en simulation (73 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
 - N'agit que par marche/arrêt du poêle (allumage avec sa puissance et sa consigne par défaut). La consigne d'eau peut être réglée automatiquement (loi d'eau, 0.7), mais cette fonction est désactivée par défaut et n'a jamais été essayée sur un vrai poêle.
 - Un poêle ne devrait jamais dépendre d'un seul logiciel : gardez ses sécurités propres et vérifiez avec votre assurance/installateur.

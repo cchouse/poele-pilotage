@@ -356,6 +356,21 @@ async def test_derogation_prend_fin_a_la_prochaine_tranche(hass, freezer):
     assert not entry.runtime_data.derogations
 
 
+async def test_consigne_sans_planning_reste_sans_limite(hass, freezer):
+    entry, _ = await installer(hass, freezer, heure="2026-11-05 22:00:00+01:00", temp="19.5", zone="maison")
+    await hass.services.async_call("pilotage_poele", "derogation", {"zone": "maison", "consigne": 21.0}, blocking=True)
+    nombre = eid(hass, entry, "number", "consigne_maison")
+    p = entry.runtime_data
+    assert p.derogations["maison"]["jusqu"] is None
+    await avancer(hass, freezer, entry, 24 * 60)                 # 24 h plus tard : toujours là
+    assert float(hass.states.get(nombre).state) == 21.0 and "maison" in p.derogations
+    z = hass.states.get(eid(hass, entry, "sensor", "etat")).attributes["zones"]["maison"]
+    assert z["derogation"]["jusqu"] is None
+    await hass.services.async_call("button", "press", {"entity_id": eid(hass, entry, "button", "retour_planning_maison")}, blocking=True)
+    await hass.async_block_till_done()
+    assert not p.derogations
+
+
 async def test_allumage_automatique_immediat(hass, freezer):
     entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="19.0", zone="chambre")
     await _planning(hass)

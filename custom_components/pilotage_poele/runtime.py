@@ -129,6 +129,9 @@ class Pilote:
         self.amorce = bool(d.get("amorce", False))
         self.planning = {z: valider(p) for z, p in (d.get("planning") or {}).items() if z in ZONES}
         self.derogations = {z: v for z, v in (d.get("derogations") or {}).items() if z in ZONES}
+        for z, v in self.derogations.items():
+            if not self.planning.get(z):                  # anciennes dérogations de 12 h : sans planning, elles n'ont plus de fin
+                v["jusqu"] = None
         self.ignore_immediat = float(d.get("ignore_immediat") or 0.0)
         ids = [self.cfg[CONF_POELE]] + [self.cfg.get(k) for k in (CONF_STATUT, CONF_EAU, CONF_EXTERIEUR)]
         for _, c in self.pieces_cfg():
@@ -201,12 +204,17 @@ class Pilote:
         if not zone or zone not in ZONES:
             return False
         d = self.derogations.get(zone)
-        return bool(self.planning.get(zone)) or bool(d and quand.timestamp() < d["jusqu"])
+        return bool(self.planning.get(zone)) or bool(d and self._derogation_active(d, quand.timestamp()))
+
+    @staticmethod
+    def _derogation_active(d: dict[str, Any], ts: float) -> bool:
+        """Sans fin (jusqu = None) : la consigne reste jusqu'à ce qu'on la change ou l'efface."""
+        return d.get("jusqu") is None or ts < d["jusqu"]
 
     def consigne_zone(self, zone: str, quand: datetime) -> tuple[float, str] | None:
         """(consigne, source) d'une zone à un instant : dérogation en cours, sinon planning."""
         d = self.derogations.get(zone)
-        if d and quand.timestamp() < d["jusqu"]:
+        if d and self._derogation_active(d, quand.timestamp()):
             return float(d["c"]), "derogation"
         cp = consigne_a(self.planning.get(zone), quand)
         return (cp[0], "planning") if cp else None
@@ -232,7 +240,10 @@ class Pilote:
         """Pièce suivie par les échéances fixes du matin et du soir (pas de planning de zone)."""
         return not self._zone_active(c.get(CONF_ZONE), now)
 
-    def _fin_derogation(self, zone: str, now: datetime) -> float:
+    def _fin_derogation(self, zone: str, now: datetime) -> float | None:
+        """Fin de la dérogation : prochaine tranche du planning ; sans planning, aucune fin."""
+        if not self.planning.get(zone):
+            return None
         pc = prochain_changement(self.planning.get(zone), now)
         return pc[0].timestamp() if pc else now.timestamp() + 12 * 3600
 
@@ -244,6 +255,9 @@ class Pilote:
             self.planning[zone] = propre
         else:
             self.planning.pop(zone, None)
+        d = self.derogations.get(zone)
+        if d and d.get("jusqu") is None and propre:      # un planning vient d'être saisi : la consigne fixe s'arrête à la prochaine tranche
+            d["jusqu"] = self._fin_derogation(zone, dt_util.now())
         self._sauver()
         await self._tick(None)
 
@@ -277,7 +291,7 @@ class Pilote:
     async def _tick_interne(self) -> None:
         now = dt_util.now()
         ts = now.timestamp()
-        for z in [z for z, d in self.derogations.items() if d["jusqu"] <= ts]:
+        for z in [z for z, d in self.derogations.items() if not self._derogation_active(d, ts)]:
             self.derogations.pop(z)            # dérogation terminée : retour au planning
             self._sauver()
         mesures = self._mesures()
@@ -831,7 +845,7 @@ class Pilote:
                 "nom": nom, "consigne": None if cs is None else cs[0], "source": "aucune" if cs is None else cs[1],
                 "prochain": None if pc is None else {"ts": int(pc[0].timestamp()), "c": pc[1]},
                 "planning": self.planning.get(z, {}),
-                "derogation": None if not der or der["jusqu"] <= ts else {"c": der["c"], "jusqu": int(der["jusqu"])},
+                "derogation": None if not der or not self._derogation_active(der, ts) else {"c": der["c"], "jusqu": None if der.get("jusqu") is None else int(der["jusqu"])},
                 "pieces": [n for n, c in self.pieces_cfg() if c.get(CONF_ZONE) == z],
             }
         return out

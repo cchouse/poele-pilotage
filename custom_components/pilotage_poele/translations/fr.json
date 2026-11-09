@@ -151,10 +151,10 @@
     "name": "Annuler l'allumage prévu / éteindre"
    },
    "retour_planning_chambre": {
-    "name": "Revenir au planning Chambre"
+    "name": "Effacer la consigne / revenir au planning Chambre"
    },
    "retour_planning_maison": {
-    "name": "Revenir au planning Maison"
+    "name": "Effacer la consigne / revenir au planning Maison"
    }
   },
   "number": {
