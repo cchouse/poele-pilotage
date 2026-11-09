@@ -1,4 +1,4 @@
-# Pilotage poêle (Home Assistant) — version 0.9.2
+# Pilotage poêle (Home Assistant) — version 0.9.3
 
 Calcule **quand allumer** le poêle à granulés pour que les pièces soient à la bonne température à l'heure voulue, apprend les inerties de la maison, et explique chaque décision. Par défaut : **mode conseil**, rien n'est envoyé au poêle.
 
@@ -63,6 +63,9 @@ Option « Décider par zone plutôt que par pièce » (⚙ Configurer, **activé
 ## Consigne d'eau sans lecture du poêle (0.9.2)
 Le réglage de l'eau ne lit **plus jamais** la consigne du poêle pour décider (une coupure du cloud peut renvoyer une valeur par défaut, par exemple 25 °C). L'intégration calcule la consigne conseillée (limites min/max), l'envoie si elle diffère d'au moins 2 °C de **sa dernière valeur envoyée** (gardée en mémoire), au plus toutes les 30 min et 6 fois par jour, uniquement pendant la marche. Un envoi refusé est retenté 30 min plus tard ; après 3 refus de suite, le réglage se désactive. La détection de « consigne étrangère » et la vérification par relecture sont supprimées. Le journal des commandes reste.
 
+## Arrêt si l'eau est trop chaude (0.9.3)
+Option « Arrêt si l'eau dépasse la consigne d'eau de (°C) » (0 = désactivé, par défaut). Si l'eau mesurée (capteur d'eau configuré) reste au moins cet écart au-dessus de la consigne d'eau pendant 3 min, le poêle est éteint (notification + journal, origine « eau trop chaude »). Consigne de référence : ma dernière valeur envoyée si le réglage de l'eau est actif, sinon celle du poêle, ignorée si elle sort des limites min/max (valeur aberrante).
+
 ## Comment ça décide
 Heure d'allumage = échéance − (délai d'allumage + latence + besoin ÷ vitesse de montée de la pièce la plus lente) × marge. Délai d'allumage et vitesse de montée de chaque pièce sont **appris** à chaque cycle ; tant qu'ils ne le sont pas, des valeurs par défaut prudentes sont utilisées et signalées comme telles.
 
@@ -71,6 +74,6 @@ Désactivé par défaut (interrupteur « Allumage automatique »). Il n'allume q
 L'arrêt automatique est un interrupteur séparé, désactivé par défaut.
 
 ## Limites de cette version
-- Testée en simulation (72 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
+- Testée en simulation (74 tests), **jamais sur votre poêle réel**. L'état du poêle est déduit de ses textes (« Heating », « Standby »…) : vérifiez sur la carte, section « Derniers cycles », l'état brut lu. Les textes non reconnus donnent « état inconnu » et bloquent l'allumage automatique.
 - N'agit que par marche/arrêt du poêle (allumage avec sa puissance et sa consigne par défaut). La consigne d'eau peut être réglée automatiquement (loi d'eau, 0.7), mais cette fonction est désactivée par défaut et n'a jamais été essayée sur un vrai poêle.
 - Un poêle ne devrait jamais dépendre d'un seul logiciel : gardez ses sécurités propres et vérifiez avec votre assurance/installateur.

@@ -43,6 +43,7 @@
      "max_allumages": "Allumages automatiques max par jour",
      "marche_min": "Marche minimale avant arrêt automatique (min)",
      "marche_max": "Arrêt de sécurité d'un allumage automatique (min)",
+     "arret_delta_eau": "Stop if water exceeds the water setpoint by (°C, 0 = off)",
      "arret_min": "Attente minimale entre deux allumages (min)",
      "marge": "Marge de prudence (1,25 = +25 %)",
      "hysteresis": "Écart au-dessus de la cible pour l'arrêt (°C)",

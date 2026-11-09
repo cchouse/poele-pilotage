@@ -1,6 +1,6 @@
 /* Carte « Pilotage poêle » — chargée automatiquement par l'intégration.
  * Répond à : que fait le poêle, quand sera-t-il allumé et POURQUOI, qu'ai-je appris, et que puis-je forcer ou annuler. */
-const VERSION = "0.9.2";
+const VERSION = "0.9.3";
 const fmt = (x, n = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n).replace(".", ",");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -142,7 +142,7 @@ class PilotagePoeleCard extends HTMLElement {
   _commandes(a) {
     const l = a.commandes || [];
     const src = { auto: "allumage automatique", force: "bouton « Allumer maintenant »", annulation: "bouton « Annuler »", arret_auto: "arrêt automatique",
-                  securite: "sécurité", eau: "loi d'eau", tetes: "têtes thermostatiques", externe: "⚠ reçu d'ailleurs (pas envoyé par moi)" };
+                  securite: "sécurité", eau_haute: "eau trop chaude", eau: "loi d'eau", tetes: "têtes thermostatiques", externe: "⚠ reçu d'ailleurs (pas envoyé par moi)" };
     const srv = { turn_on: "Allumer", turn_off: "Éteindre", set_temperature: "Consigne" };
     const nom = (e) => (a.pieces_etat || []).length && e && e.startsWith("climate.") ? e.replace("climate.", "") : e;
     const lignes = l.map((c) => `<li>${hhmm(c.ts)} · ${srv[c.service] || esc(c.service)}${c.valeur != null ? " " + fmt(c.valeur, 0) + " °C" : ""} → ${esc(nom(c.entite))} · ${src[c.source] || esc(c.source)}${c.raison ? ` — ${esc(c.raison)}` : ""}${c.erreur ? ` ⚠ ${esc(c.erreur)}` : ""}</li>`).join("");

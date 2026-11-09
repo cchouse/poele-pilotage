@@ -753,3 +753,34 @@ async def test_journal_des_commandes(hass, freezer):
     assert [c["source"] for c in j][:2] == ["force", "tetes"] or {c["source"] for c in j} >= {"force", "tetes"}
     assert j[0]["service"] == "turn_on" and j[0]["entite"] == POELE                 # le plus récent d'abord
     assert any(c["entite"] == TETE1 and c["valeur"] == 20.5 for c in j)
+
+
+async def test_arret_si_eau_trop_chaude(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="17.0")
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "arret_delta_eau": 5.0})
+    await hass.async_block_till_done()
+    _poele_eau(hass, 60)
+    poele(hass, "Marche", mode="heat", action="heating")
+    hass.states.async_set(POELE, "heat", {"hvac_action": "heating", "temperature": 60, "min_temp": 50, "max_temp": 80})
+    hass.states.async_set(EAU, "64")                             # moins de 5 °C au-dessus : rien
+    for _ in range(3):
+        await avancer(hass, freezer, entry, 2)
+    assert appels["off"] == []
+    hass.states.async_set(EAU, "65.5")                           # dépassement durable : arrêt
+    await avancer(hass, freezer, entry, 1)
+    assert appels["off"] == []                                   # pas avant 3 min
+    await avancer(hass, freezer, entry, 4)
+    assert len(appels["off"]) == 1
+    assert any("au-dessus de la consigne d'eau" in a.data["message"] for a in appels["notif"])
+
+
+async def test_pas_d_arret_eau_si_consigne_aberrante(hass, freezer):
+    entry, appels = await installer(hass, freezer, heure="2026-11-05 12:00:00+01:00", temp="17.0")
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "arret_delta_eau": 5.0})
+    await hass.async_block_till_done()
+    hass.states.async_set(POELE, "heat", {"hvac_action": "heating", "temperature": 25, "min_temp": 50, "max_temp": 80})
+    hass.states.async_set(STATUT, "Marche")
+    hass.states.async_set(EAU, "62")                             # consigne lue 25 °C : hors limites, ignorée
+    for _ in range(4):
+        await avancer(hass, freezer, entry, 3)
+    assert appels["off"] == []

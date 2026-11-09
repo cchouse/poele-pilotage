@@ -60,6 +60,7 @@ class Pilote:
         self.drapeaux = {"auto": False, "arret_auto": False, "absent": False, "verrou": False, "tetes": True, "eau": False}
         self._tetes_envoye: dict[str, float] = {}     # tête -> dernière consigne envoyée
         self.tetes_info: dict[str, dict[str, Any]] = {}
+        self._eau_haute_depuis: float | None = None
         self.eau_changes: list[float] = []          # horodatages des changements de consigne d'eau
         self.eau_info: dict[str, Any] | None = None  # eau conseillée (courbe + ajustement)
         self.eau_envoi: dict[str, Any] | None = None  # dernier envoi : c, ts, verifie, erreur
@@ -677,6 +678,7 @@ class Pilote:
                 return
             await self._commande("turn_off", "securite")
             await self._notifier(f"Poêle : arrêt de sécurité après {round(float(o['marche_max']))} minutes de marche.")
+        await self._securite_eau_haute(ts)
         # arrêt automatique (si activé) : toutes les pièces au-dessus de cible + hystérésis depuis 15 min
         c = self.conditions_arret(ts, mesures)
         if self.drapeaux["arret_auto"] and self.run and self.run.get("marche"):
@@ -688,6 +690,34 @@ class Pilote:
                 await self._notifier("Poêle éteint automatiquement : toutes les pièces ont atteint leur température.")
         else:
             self._stable_depuis = None
+
+    def _consigne_eau_reference(self) -> float | None:
+        """Consigne d'eau de référence : ma dernière valeur envoyée si je règle l'eau, sinon celle du poêle
+        (ignorée si elle sort des limites : valeur aberrante d'une entité indisponible)."""
+        if self.drapeaux.get("eau") and self.eau_envoi and not self.eau_envoi.get("erreur"):
+            return float(self.eau_envoi["c"])
+        st = self.hass.states.get(self.cfg[CONF_POELE])
+        cur = None if st is None else st.attributes.get("temperature")
+        if not isinstance(cur, (int, float)):
+            return None
+        lo, hi = self._bornes_eau()
+        return float(cur) if lo <= float(cur) <= hi else None
+
+    async def _securite_eau_haute(self, ts: float) -> None:
+        """Arrêt si l'eau mesurée dépasse la consigne d'eau de l'écart choisi, de façon durable (3 min)."""
+        delta = float(self.opt.get("arret_delta_eau") or 0)
+        eau = _float(self.hass, self.cfg.get(CONF_EAU))
+        ref = self._consigne_eau_reference() if delta > 0 else None
+        if delta <= 0 or self.etat not in ("allumage", "marche") or eau is None or ref is None or eau < ref + delta:
+            self._eau_haute_depuis = None
+            return
+        self._eau_haute_depuis = self._eau_haute_depuis or ts
+        if ts - self._eau_haute_depuis < 180 or self._off_recent(ts):
+            return
+        self._eau_haute_depuis = None
+        await self._commande("turn_off", "eau_haute")
+        await self._notifier(f"Poêle éteint : l'eau est à {_v(eau)} °C, au-dessus de la consigne d'eau ({_v(ref, 0)} °C) "
+                             f"de plus de {_v(delta)} °C.")
 
     def conditions_arret(self, ts: float, mesures: list[PieceMesure]) -> dict[str, Any]:
         """Toutes les conditions de l'arrêt automatique, avec leur état — sert à la décision ET à l'affichage."""

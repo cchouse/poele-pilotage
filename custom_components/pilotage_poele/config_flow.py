@@ -86,6 +86,7 @@ def _schema_options(d: dict[str, Any]) -> vol.Schema:
         vol.Required("max_allumages", default=d["max_allumages"]): num(1, 6),
         vol.Required("marche_min", default=d["marche_min"]): num(30, 360, 5, "min"),
         vol.Required("marche_max", default=d["marche_max"]): num(120, 900, 10, "min"),
+        vol.Required("arret_delta_eau", default=d["arret_delta_eau"]): num(0, 30, 0.5, "°C"),
         vol.Required("arret_min", default=d["arret_min"]): num(0, 240, 5, "min"),
         vol.Required("marge", default=d["marge"]): num(1.0, 2.0, 0.05),
         vol.Required("hysteresis", default=d["hysteresis"]): num(0, 2, 0.1, "°C"),

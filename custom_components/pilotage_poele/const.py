@@ -1,7 +1,7 @@
 """Constantes de l'intégration Pilotage poêle."""
 DOMAIN = "pilotage_poele"
 SUBENTRY_PIECE = "piece"
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 URL_CARTE = "/pilotage_poele/pilotage-poele-card.js"
 
 # configuration principale
@@ -27,6 +27,7 @@ OPTIONS_DEFAUT = {
     "fenetre_fin": "22:30:00",
     "max_allumages": 3,
     "marche_min": 90,        # minutes : durée minimale de marche avant tout arrêt automatique
+    "arret_delta_eau": 0.0,  # °C : arrêt si l'eau mesurée dépasse la consigne d'eau de cet écart (0 = désactivé)
     "marche_max": 480,       # minutes : arrêt de sécurité pour un allumage automatique
     "arret_min": 45,         # minutes d'arrêt minimum entre deux allumages automatiques
     "marge": 1.25,           # marge de prudence sur la durée de chauffe
